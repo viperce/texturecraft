@@ -1045,4 +1045,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Remove resolution override", "해상도 재정의 제거"),
     ("Texture set resolution", "텍스처 세트 해상도"),
     ("UV tile {tile} resolution", "UV 타일 {tile} 해상도"),
+    ("Advanced settings", "고급 설정"),
+    ("Import baked maps", "베이크된 맵 가져오기"),
+    ("Name each file after its texture set, like Body_normal.png", "각 파일 이름을 텍스처 세트 이름으로 시작하세요(예: Body_normal.png)"),
+    ("Add...", "추가..."),
+    ("Baked maps imported: {count}", "가져온 베이크된 맵: {count}"),
+    ("Not imported: {files}", "가져오지 않음: {files}"),
 ];

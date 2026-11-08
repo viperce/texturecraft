@@ -11,6 +11,7 @@ use texturecraft_render::ibl::ENVIRONMENTS;
 use crate::TextureCraftApp;
 use crate::i18n::LANGUAGES;
 use crate::i18n::{tr, trf};
+use crate::new_project_advanced::COMBO_WIDTH;
 use crate::state::Mode;
 use crate::theme::{Accent, Brightness, Tokens, caption};
 use crate::widgets::{color_swatch, combo, icon_button, primary_button, slider, slider_edit};
@@ -388,24 +389,28 @@ fn new_project(app: &mut TextureCraftApp, ctx: &egui::Context) {
     if !app.ui.windows.new_project {
         return;
     }
+
     let mut open = true;
     let mut create = false;
     dialog("new_project", tr("New project"), &mut open).show(ctx, |ui| {
         ui.label(caption(tr("Basic settings")));
-        egui::Grid::new("np").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+        egui::Grid::new("np").num_columns(2).spacing(vec2(12.0, 8.0)).min_col_width(crate::new_project_advanced::form_label_width(ui)).show(ui, |ui| {
             ui.label(tr("3D mesh"));
             ui.horizontal(|ui| {
                 let label = app.ui.new_project.file.clone().unwrap_or_else(|| {
                     BUILTINS
                         .iter()
                         .find(|(id, _)| *id == app.ui.new_project.mesh)
-                        .map(|(_, l)| trf("Built-in: {mesh}", &[("mesh", &tr(l))]))
+                        .map(|(_, builtin_label)| trf("Built-in: {mesh}", &[("mesh", &tr(builtin_label))]))
                         .unwrap_or_default()
                 });
-                egui::ComboBox::from_id_salt("np_mesh").width(200.0).selected_text(label).show_ui(ui, |ui| {
-                    for (id, l) in BUILTINS {
+                egui::ComboBox::from_id_salt("np_mesh").width(COMBO_WIDTH).selected_text(label).show_ui(ui, |ui| {
+                    for (id, builtin_label) in BUILTINS {
                         if ui
-                            .selectable_label(app.ui.new_project.mesh == id && app.ui.new_project.file.is_none(), trf("Built-in: {mesh}", &[("mesh", &tr(l))]))
+                            .selectable_label(
+                                app.ui.new_project.mesh == id && app.ui.new_project.file.is_none(),
+                                trf("Built-in: {mesh}", &[("mesh", &tr(builtin_label))]),
+                            )
                             .clicked()
                         {
                             app.ui.new_project.mesh = id.to_string();
@@ -415,20 +420,21 @@ fn new_project(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 });
                 if file_dialogs_available()
                     && ui.button(tr("Select...")).clicked()
-                    && let Some(p) = pick_mesh_file()
+                    && let Some(path) = pick_mesh_file()
                 {
-                    app.ui.new_project.file = Some(p);
+                    app.ui.new_project.file = Some(path);
                 }
             });
             ui.end_row();
             ui.label(tr("Project template"));
-            let np = &mut app.ui.new_project;
-            egui::ComboBox::from_id_salt("np_template").width(200.0).selected_text(np.template.clone()).show_ui(ui, |ui| {
-                let user = app.session.templates.list.iter();
-                for t in texturecraft_engine::template_cmds::builtin_templates().iter().chain(user) {
-                    if ui.selectable_label(t.name == np.template, &t.name).clicked() {
-                        np.template = t.name.clone();
-                        np.resolution = t.resolution;
+            let new_project = &mut app.ui.new_project;
+            egui::ComboBox::from_id_salt("np_template").width(COMBO_WIDTH).selected_text(new_project.template.clone()).show_ui(ui, |ui| {
+                let user_templates = app.session.templates.list.iter();
+                for template in texturecraft_engine::template_cmds::builtin_templates().iter().chain(user_templates) {
+                    if ui.selectable_label(template.name == new_project.template, &template.name).clicked() {
+                        new_project.template = template.name.clone();
+                        new_project.resolution = template.resolution;
+                        new_project.normal_format = None;
                     }
                 }
             });
@@ -447,20 +453,20 @@ fn new_project(app: &mut TextureCraftApp, ctx: &egui::Context) {
             ui.end_row();
             ui.label(tr("Document resolution"));
             egui::ComboBox::from_id_salt("np_res").selected_text(format!("{0} x {0}", app.ui.new_project.resolution)).show_ui(ui, |ui| {
-                for r in [512u32, 1024, 2048, 4096] {
-                    ui.selectable_value(&mut app.ui.new_project.resolution, r, format!("{r} x {r}"));
+                for size in [512u32, 1024, 2048, 4096] {
+                    ui.selectable_value(&mut app.ui.new_project.resolution, size, format!("{size} x {size}"));
                 }
             });
             ui.end_row();
             ui.label(tr("UV tiles (UDIM)"));
-            let tiles_label = |m: Option<bool>| match m {
+            let tiles_label = |tiles: Option<bool>| match tiles {
                 None => tr("Automatic (from the mesh UVs)"),
                 Some(true) => tr("On"),
                 Some(false) => tr("Off"),
             };
             egui::ComboBox::from_id_salt("np_tiles").selected_text(tiles_label(app.ui.new_project.uv_tiles)).show_ui(ui, |ui| {
-                for m in [None, Some(true), Some(false)] {
-                    ui.selectable_value(&mut app.ui.new_project.uv_tiles, m, tiles_label(m));
+                for tiles in [None, Some(true), Some(false)] {
+                    ui.selectable_value(&mut app.ui.new_project.uv_tiles, tiles, tiles_label(tiles));
                 }
             });
             ui.end_row();
@@ -468,6 +474,8 @@ fn new_project(app: &mut TextureCraftApp, ctx: &egui::Context) {
             ui.text_edit_singleline(&mut app.ui.new_project.name);
             ui.end_row();
         });
+        ui.add_space(8.0);
+        crate::new_project_advanced::advanced_settings(app, ui);
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -481,15 +489,16 @@ fn new_project(app: &mut TextureCraftApp, ctx: &egui::Context) {
         });
     });
     if create {
-        let np = app.ui.new_project.clone();
-        let (cmd, mesh) = match &np.file {
+        let new_project = app.ui.new_project.clone();
+        let (command, mesh) = match &new_project.file {
             Some(path) => ("file.new", path.clone()),
-            None => ("project.new", np.mesh.clone()),
+            None => ("project.new", new_project.mesh.clone()),
         };
-        let r = app.run(cmd, json!({"mesh": mesh, "resolution": np.resolution, "name": np.name, "uvTiles": np.uv_tiles, "template": np.template})).map(|_| ());
-        if r.is_some() {
+        let params = json!({"mesh": mesh, "resolution": new_project.resolution, "name": new_project.name, "uvTiles": new_project.uv_tiles, "template": new_project.template});
+        if app.run(command, params).is_some() {
             app.ui.windows.new_project = false;
             app.ui.mode = Mode::Painting;
+            crate::new_project_advanced::apply_after_create(app, &new_project);
         }
     }
     if !open {

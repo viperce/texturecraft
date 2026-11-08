@@ -1087,4 +1087,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Remove resolution override", "Supprimer la résolution personnalisée"),
     ("Texture set resolution", "Résolution de l'ensemble de textures"),
     ("UV tile {tile} resolution", "Résolution de la tuile UV {tile}"),
+    ("Advanced settings", "Paramètres avancés"),
+    ("Import baked maps", "Importer des cartes précalculées"),
+    ("Name each file after its texture set, like Body_normal.png", "Nommez chaque fichier d'après son ensemble de textures, par ex. Body_normal.png"),
+    ("Add...", "Ajouter..."),
+    ("Baked maps imported: {count}", "Cartes précalculées importées : {count}"),
+    ("Not imported: {files}", "Non importés : {files}"),
 ];

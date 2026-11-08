@@ -1035,4 +1035,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Remove resolution override", "إزالة تجاوز الدقة"),
     ("Texture set resolution", "دقة مجموعة الخامات"),
     ("UV tile {tile} resolution", "دقة بلاطة UV {tile}"),
+    ("Advanced settings", "إعدادات متقدمة"),
+    ("Import baked maps", "استيراد خرائط مخبوزة"),
+    ("Name each file after its texture set, like Body_normal.png", "سمِّ كل ملف باسم مجموعة الخامات الخاصة به، مثل Body_normal.png"),
+    ("Add...", "إضافة..."),
+    ("Baked maps imported: {count}", "الخرائط المخبوزة المستوردة: {count}"),
+    ("Not imported: {files}", "لم يتم استيرادها: {files}"),
 ];

@@ -1057,4 +1057,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Remove resolution override", "解像度の上書きを解除"),
     ("Texture set resolution", "テクスチャセットの解像度"),
     ("UV tile {tile} resolution", "UVタイル {tile} の解像度"),
+    ("Advanced settings", "詳細設定"),
+    ("Import baked maps", "ベイク済みマップを読み込む"),
+    ("Name each file after its texture set, like Body_normal.png", "各ファイル名をテクスチャセット名で始めてください（例: Body_normal.png）"),
+    ("Add...", "追加..."),
+    ("Baked maps imported: {count}", "読み込んだベイク済みマップ: {count}"),
+    ("Not imported: {files}", "読み込まれなかったファイル: {files}"),
 ];

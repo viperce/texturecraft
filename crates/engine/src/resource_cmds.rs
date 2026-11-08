@@ -36,11 +36,17 @@ pub(crate) fn decoded(d: texturecraft_formats::DecodedImage) -> Arc<ImageRes> {
 }
 
 impl Session {
-    /// Add an image resource from bytes (one undo step); returns its unique, sanitized name.
+    /// Add an image resource from bytes (one undo step); returns its unique, sanitized name
     pub fn import_resource_bytes(&mut self, file_name: &str, bytes: Vec<u8>) -> Result<String> {
+        self.edit("Import resource", |s| s.add_image_resource(file_name, bytes))
+    }
+
+    /// [`Session::import_resource_bytes`] without its own undo step, for imports inside a larger edit
+    pub(crate) fn add_image_resource(&mut self, file_name: &str, bytes: Vec<u8>) -> Result<String> {
         if bytes.len() > MAX_BYTES {
             return Err(EngineError::Other(format!("{file_name} is larger than {} MB", MAX_BYTES >> 20)));
         }
+
         let image = texturecraft_formats::decode_image(&bytes).map_err(|e| EngineError::Other(format!("{file_name}: {e}")))?;
         let leaf = std::path::Path::new(file_name).file_name().and_then(|n| n.to_str()).unwrap_or("image");
         let base = texturecraft_formats::sanitize_resource_name(leaf);
@@ -50,11 +56,8 @@ impl Session {
             name = format!("{n}_{base}");
             n += 1;
         }
-        let key = name.clone();
-        self.edit("Import resource", |s| {
-            s.doc.resources.insert(key, Arc::new(bytes));
-            Ok(())
-        })?;
+
+        self.doc.resources.insert(name.clone(), Arc::new(bytes));
         self.images.insert(name.clone(), decoded(image));
         Ok(name)
     }
@@ -98,13 +101,25 @@ fn list(s: &Session) -> Value {
 #[cfg(not(target_arch = "wasm32"))]
 fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let path = strp(p, "path").ok_or_else(|| bad("resource.import", "`path` is required"))?;
-    let meta = std::fs::metadata(path).map_err(|e| bad("resource.import", format!("cannot read {path}: {e}")))?;
-    if meta.len() > MAX_BYTES as u64 {
-        return Err(bad("resource.import", format!("{path} is too large")));
-    }
-    let bytes = std::fs::read(path).map_err(|e| bad("resource.import", format!("cannot read {path}: {e}")))?;
+    let bytes = read_image_file("resource.import", path)?;
     let name = s.import_resource_bytes(path, bytes)?;
     Ok(json!({ "name": name }))
+}
+
+/// The bytes of the image file at `path`, refused above [`MAX_BYTES`]
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn read_image_file(cmd: &str, path: &str) -> Result<Vec<u8>> {
+    let meta = std::fs::metadata(path).map_err(|e| bad(cmd, format!("cannot read {path}: {e}")))?;
+    if meta.len() > MAX_BYTES as u64 {
+        return Err(bad(cmd, format!("{path} is too large")));
+    }
+
+    std::fs::read(path).map_err(|e| bad(cmd, format!("cannot read {path}: {e}")))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn read_image_file(cmd: &str, _: &str) -> Result<Vec<u8>> {
+    Err(bad(cmd, "file paths are not available in the browser"))
 }
 
 #[cfg(target_arch = "wasm32")]

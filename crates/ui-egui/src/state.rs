@@ -1,7 +1,7 @@
 //! UI state (serde, so the control channel can read and drive it).
 
 use serde::{Deserialize, Serialize};
-use texturecraft_engine::core::{BakedMap, Channel};
+use texturecraft_engine::core::{BakedMap, Channel, NormalFormat};
 
 use crate::docking::Dock;
 use crate::keymap::Keymap;
@@ -151,6 +151,12 @@ pub struct NewProject {
     /// Name typed to save the current project's settings as a template.
     #[serde(skip)]
     pub template_name: String,
+    /// Normal map format of the project and its imported normal maps; None keeps the template's
+    #[serde(default)]
+    pub normal_format: Option<NormalFormat>,
+    /// Baked map files to import at creation, matched to sets and mesh maps by name (desktop only)
+    #[serde(skip)]
+    pub baked_maps: Vec<String>,
 }
 
 fn default_template() -> String {
@@ -167,6 +173,8 @@ impl Default for NewProject {
             uv_tiles: None,
             template: default_template(),
             template_name: String::new(),
+            normal_format: None,
+            baked_maps: Vec::new(),
         }
     }
 }

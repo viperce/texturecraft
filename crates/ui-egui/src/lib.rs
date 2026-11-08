@@ -19,6 +19,7 @@ pub mod keymap;
 mod mask_preview_image;
 mod mask_shape;
 pub mod menus;
+pub mod new_project_advanced;
 pub mod parity;
 mod preview_image;
 mod preview_request;

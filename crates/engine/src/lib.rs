@@ -29,6 +29,8 @@ pub mod material_lib;
 pub mod materials;
 pub mod materialx_cmds;
 pub mod meshmap_cmds;
+mod meshmap_file_name;
+pub mod meshmap_import_cmds;
 pub mod painting;
 pub mod path_tool;
 // Mesh reimport reads files: native only.
