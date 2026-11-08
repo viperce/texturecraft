@@ -428,6 +428,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Invert", "反転"),
     ("Invert mask", "マスクを反転"),
     ("Invert mask background", "マスクの背景を反転"),
+    ("Invert mask value", "マスク値を反転"),
     ("Invert quick mask", "クイックマスクを反転"),
     ("Jitters", "ジッター"),
     ("Join the ArtCraft community on Discord", "DiscordでArtCraftコミュニティに参加"),

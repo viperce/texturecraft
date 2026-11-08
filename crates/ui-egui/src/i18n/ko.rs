@@ -422,6 +422,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Invert", "반전"),
     ("Invert mask", "마스크 반전"),
     ("Invert mask background", "마스크 배경 반전"),
+    ("Invert mask value", "마스크 값 반전"),
     ("Invert quick mask", "퀵 마스크 반전"),
     ("Jitters", "지터"),
     ("Join the ArtCraft community on Discord", "Discord에서 ArtCraft 커뮤니티에 참여하세요"),

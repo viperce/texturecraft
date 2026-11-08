@@ -437,6 +437,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Invert", "Inverti"),
     ("Invert mask", "Inverti maschera"),
     ("Invert mask background", "Inverti sfondo maschera"),
+    ("Invert mask value", "Inverti valore maschera"),
     ("Invert quick mask", "Inverti maschera rapida"),
     ("Jitters", "Variazioni"),
     ("Join the ArtCraft community on Discord", "Unisciti alla community di ArtCraft su Discord"),

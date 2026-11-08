@@ -389,6 +389,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Invert", "反相"),
     ("Invert mask", "反相遮罩"),
     ("Invert mask background", "反相遮罩背景"),
+    ("Invert mask value", "反相遮罩值"),
     ("Invert quick mask", "反相快速遮罩"),
     ("Jitters", "抖动"),
     ("Join the ArtCraft community on Discord", "加入 Discord 上的 ArtCraft 社区"),
