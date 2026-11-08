@@ -33,7 +33,7 @@ USAGE:
                    [--pitch <deg>] [--samples <n>] [--bounces <n>] [--cpu]
       Render the viewport to PNG (needs a GPU or software adapter); --camera looks through a
       camera saved in the project (camera.add); --samples path traces it instead (Rendering
-      mode), on the GPU when it has compute shaders, else (or with --cpu) on the CPU.
+      mode), on the GPU when it has compute shaders, else (or with --cpu) on the CPU (no GPU needed).
   texturecraft-cli new <mesh file | builtin:<id>> <out.tcraft> [--resolution <px>] [--sample]
       New project; --sample bakes and applies a smart material to every texture set. The
       sample's mesh maps are baked at the resolution up to 1024 px (most of the file's size),

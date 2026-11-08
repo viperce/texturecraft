@@ -342,7 +342,7 @@ impl Headless {
         }
         let gpu = match self.gpu.get_or_insert_with(Gpu::new) {
             Ok(g) => g,
-            Err(e) => return Err(AutomationError::Other(format!("cannot render: {e}"))),
+            Err(e) => return Err(AutomationError::Other(format!("cannot render: {e}; path tracing (`samples`) needs no GPU"))),
         };
         // Last-resort guard: wgpu panics on device errors; drop the device and report instead.
         let session = &mut self.session;

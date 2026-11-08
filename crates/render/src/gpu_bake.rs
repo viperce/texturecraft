@@ -66,9 +66,7 @@ fn err(e: impl std::fmt::Display) -> BakeError {
 
 impl Gpu {
     fn new() -> Result<Gpu, String> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let options = wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() };
-        let adapter = pollster::block_on(instance.request_adapter(&options)).map_err(|e| format!("no GPU adapter: {e}"))?;
+        let adapter = crate::headless::adapter()?;
         let info = adapter.get_info();
         if info.device_type == wgpu::DeviceType::Cpu {
             return Err(format!("{} is a software renderer", info.name));

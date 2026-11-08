@@ -323,4 +323,6 @@ steps or an object with an optional input and output (paths relative to the curr
 ```
 
 Errors print `texturecraft-cli <command>: error: …` and exit 1; usage errors exit 2. The CLI is a
-console program and never opens a window; `render` needs a GPU or software adapter.
+console program and never opens a window; `render` needs a GPU or software adapter, unless it path
+traces (`--samples`). Like the desktop app, it takes the high-performance GPU; `WGPU_ADAPTER_NAME`
+(part of the adapter's name) or `WGPU_POWER_PREF` (`high`, `low` or `none`) picks another.
