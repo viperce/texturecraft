@@ -80,7 +80,8 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 - **Open** glTF/GLB, FBX (binary and ASCII), COLLADA, **USD** (usda, usdc, usdz), **Alembic**,
   OBJ, PLY and STL, or a built-in mesh; UVs are generated when a mesh has none. A `.gltf`'s buffers
   and images and a loose USD layer's textures are read from its folder and kept in the project.
-  Reimport a changed mesh and your painted strokes stay on the surface.
+  Reimport a changed mesh and your painted strokes stay on the surface. **Edit ▸ Change mesh...**
+  (`file.changeMesh`) moves the project onto a different mesh file and keeps its layers.
 - **UDIM / UV tiles:** detected on import or switched on later, with a resolution per tile (blurs,
   other filters and height-to-normal slopes keep their size in UV space at any tile resolution)
   and one texture per tile on export (`$udim`).

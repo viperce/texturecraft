@@ -656,6 +656,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Redo", "Ripeti"),
     ("Reimport mesh", "Reimporta mesh"),
+    ("Change mesh...", "Cambia mesh..."),
+    ("Relative to the bounding box diagonal.", "Relativa alla diagonale del bounding box."),
     ("Remove", "Rimuovi"),
     ("Remove channel", "Rimuovi canale"),
     ("Remove effect", "Rimuovi effetto"),

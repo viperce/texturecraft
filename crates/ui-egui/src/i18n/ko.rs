@@ -629,6 +629,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Redo", "다시 실행"),
     ("Reimport mesh", "메시 다시 가져오기"),
+    ("Change mesh...", "메시 변경..."),
+    ("Relative to the bounding box diagonal.", "바운딩 박스 대각선 기준입니다."),
     ("Remove", "제거"),
     ("Remove channel", "채널 제거"),
     ("Remove effect", "이펙트 제거"),

@@ -60,6 +60,8 @@ pub struct BakeJob {
     pub queue: Vec<usize>,
     pub current: Option<(usize, Arc<Progress>, std::sync::mpsc::Receiver<texturecraft_engine::Result<texturecraft_engine::bake::BakeOutput>>)>,
     pub total: usize,
+    /// The mesh the job was started on: a result for another mesh (changed or reimported meanwhile) is not applied.
+    pub mesh_id: u64,
 }
 
 /// A MaterialCraft material re-cooking on a worker thread (one per layer at a time).
@@ -230,7 +232,7 @@ impl TextureCraftApp {
             return;
         }
         let total = sets.len();
-        self.bake = Some(BakeJob { queue: sets, current: None, total });
+        self.bake = Some(BakeJob { queue: sets, current: None, total, mesh_id: self.session.mesh_id });
     }
 
     /// Re-cook MaterialCraft material layer `layer` in the background. While one cook of the layer
@@ -284,7 +286,14 @@ impl TextureCraftApp {
 
     fn poll_bake(&mut self, ctx: &egui::Context) {
         let Some(job) = self.bake.as_mut() else { return };
-
+        if job.mesh_id != self.session.mesh_id {
+            // The mesh was swapped under the job: stop it and drop its result.
+            if let Some((_, p, _)) = &job.current {
+                p.cancel.store(true, Ordering::Relaxed);
+            }
+            self.bake = None;
+            return;
+        }
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
         if let Some((set_index, _, receiver)) = &job.current {
             match receiver.try_recv() {

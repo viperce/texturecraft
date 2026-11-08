@@ -16,8 +16,14 @@ use crate::Session;
 const REACH: f32 = 0.05;
 
 /// Re-project the painted pixels of `next` (a session on the reimported mesh holding `old`'s
-/// document) from `old`'s UV layout. Returns how many texels found the old surface.
+/// document) from `old`'s UV layout. Returns how many texels found the old surface;
+/// a texture set where none does keeps its pixels as they are. Nothing is re-projected when the
+/// UV layout and topology are unchanged (same triangles, materials and UVs): the pixels already
+/// sit where they belong, however far the mesh moved.
 pub(crate) fn preserve_strokes(old: &Session, next: &mut Session) -> usize {
+    if same_layout(&old.mesh, &next.mesh) {
+        return 0;
+    }
     let reach = REACH * 2.0 * old.mesh.radius().max(next.mesh.radius());
     let mut found = 0;
     for ts in 0..next.set_count() {
@@ -52,7 +58,12 @@ pub(crate) fn preserve_strokes(old: &Session, next: &mut Session) -> usize {
                 ((tx, ty), src)
             })
             .collect();
-        found += table.values().flatten().filter(|p| p[0].is_finite()).count();
+        let matched = table.values().flatten().filter(|p| p[0].is_finite()).count();
+        found += matched;
+        // No old surface within reach anywhere (a moved or unrelated mesh): the paint stays where it is.
+        if matched == 0 {
+            continue;
+        }
         let map = |x: f32, y: f32| {
             let (xi, yi) = (x as u32, y as u32);
             table.get(&(xi / TILE, yi / TILE)).and_then(|t| t.get(((yi % TILE) * TILE + xi % TILE) as usize)).filter(|p| p[0].is_finite()).map(|p| (p[0], p[1]))
@@ -61,6 +72,12 @@ pub(crate) fn preserve_strokes(old: &Session, next: &mut Session) -> usize {
         crate::layer_ops::map_set_images(&mut next.doc, ts, |img, empty| crate::uv_tile_cmds::remap_image(img, (w, h), empty, &map, &tiles, false));
     }
     found
+}
+
+/// Same index buffer, same UVs per vertex and the same material ranges.
+fn same_layout(a: &texturecraft_geom::Mesh, b: &texturecraft_geom::Mesh) -> bool {
+    let ranges = |m: &texturecraft_geom::Mesh| m.submeshes.iter().map(|s| (s.material, s.start, s.count)).collect::<Vec<_>>();
+    a.indices == b.indices && a.uvs == b.uvs && ranges(a) == ranges(b)
 }
 
 #[cfg(test)]
@@ -103,5 +120,51 @@ mod tests {
             if painted == (p.pos.x > 0.0) { right += 1 } else { wrong += 1 }
         }
         assert!(right > 10_000 && wrong == 0, "{right} right, {wrong} wrong");
+    }
+
+    #[test]
+    fn a_mesh_with_no_surface_in_reach_keeps_the_paint_where_it_is() {
+        let mut s = Session::new_project("p", primitives::builtin("plane").unwrap(), "builtin:plane", None, 128).unwrap();
+        let id = s.doc.project.texture_sets[0].stack[0];
+        let img = s.doc.pixels.layer_mut(id, Channel::BaseColor, (128, 128));
+        for x in 0..64 {
+            img.set(x, 40, &[65535, 0, 0, 65535]);
+        }
+        // The same plane far away and with mirrored UVs (so the layout differs and the unchanged-layout
+        // shortcut is not taken): nothing of the old surface is within reach.
+        let mut mesh = (*s.mesh).clone();
+        for p in &mut mesh.positions {
+            p.x += 100.0;
+        }
+        for uv in &mut mesh.uvs {
+            *uv = Vec2::new(1.0 - uv.x, uv.y);
+        }
+        let mut next = Session::new(s.doc.clone(), mesh, None).unwrap();
+        assert_eq!(preserve_strokes(&s, &mut next), 0);
+        let img = next.doc.pixels.layer(id, Channel::BaseColor).unwrap();
+        assert_eq!(img.get(10, 40)[3], 65535, "the painted texel is still there");
+    }
+
+    #[test]
+    fn a_translated_mesh_with_the_same_uvs_keeps_every_pixel() {
+        let mut s = Session::new_project("p", primitives::builtin("plane").unwrap(), "builtin:plane", None, 128).unwrap();
+        let id = s.doc.project.texture_sets[0].stack[0];
+        let img = s.doc.pixels.layer_mut(id, Channel::BaseColor, (128, 128));
+        for x in 0..128 {
+            img.set(x, 40, &[65535, 0, 0, 65535]);
+        }
+        // Slid along its own surface by a fraction of the plane: half of it still overlaps the old one.
+        let mut mesh = (*s.mesh).clone();
+        let shift = mesh.radius() * 0.5;
+        for p in &mut mesh.positions {
+            p.x += shift;
+        }
+        let mut next = Session::new(s.doc.clone(), mesh, None).unwrap();
+        assert_eq!(preserve_strokes(&s, &mut next), 0);
+        let img = next.doc.pixels.layer(id, Channel::BaseColor).unwrap();
+        for x in 0..128 {
+            assert_eq!(img.get(x, 40)[3], 65535, "texel {x} of the painted row moved");
+            assert_eq!(img.get(x, 41)[3], 0, "texel {x} of the next row got paint");
+        }
     }
 }

@@ -834,6 +834,13 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
             app.run("file.reimportMesh", json!({"path": path, "preserveStrokes": true}));
             true
         }
+        "file.changeMesh" => {
+            // Layers and texture sets stay; the strokes follow the surface onto the new mesh.
+            if let Some(p) = rfd::FileDialog::new().add_filter(tr("3D meshes"), &texturecraft_engine::formats::mesh_import::MESH_EXTENSIONS).pick_file() {
+                app.run("file.changeMesh", json!({"path": p.display().to_string()}));
+            }
+            true
+        }
         _ => false,
     }
 }

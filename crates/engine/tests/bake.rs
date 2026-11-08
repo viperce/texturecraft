@@ -611,3 +611,42 @@ fn a_failed_multi_set_bake_restores_settings_pixels_and_history() {
     assert_eq!(session.doc.baked, original.baked);
     assert_eq!(session.history_labels(), history);
 }
+
+/// Edit > Change mesh swaps the mesh under a baked project: the high poly and the skew map stay,
+/// the project counts as changed, and image resources are decoded in the new session.
+#[test]
+fn changing_the_mesh_keeps_the_bake_setup_and_marks_the_project_changed() {
+    let mut s = plane_session();
+    let plane = s.mesh.as_ref().clone();
+    let high = temp_file("change_high.obj", &obj(&plane, 0.002, f32::MAX, [1.0; 3]));
+    execute(&mut s, "bake.highPoly.add", &json!({ "path": high })).unwrap();
+    execute(&mut s, "bake.skew.set", &json!({ "value": 1.0 })).unwrap();
+    // 1x1 PNG as an image resource.
+    let png = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08,
+        0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00,
+        0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+    s.import_resource_bytes("dot.png", png.to_vec()).unwrap();
+    s.modified = false;
+    let mesh_id = s.mesh_id;
+
+    let mut low = String::new();
+    for p in &plane.positions {
+        low += &format!("v {} {} {}\n", p.x, p.y, p.z);
+    }
+    for uv in &plane.uvs {
+        low += &format!("vt {} {}\n", uv.x, 1.0 - uv.y);
+    }
+    for t in plane.indices.chunks_exact(3) {
+        low += &format!("f {a}/{a} {b}/{b} {c}/{c}\n", a = t[0] + 1, b = t[1] + 1, c = t[2] + 1);
+    }
+    let low = temp_file("change_low.obj", &low);
+    execute(&mut s, "file.changeMesh", &json!({ "path": low })).unwrap();
+
+    assert_ne!(s.mesh_id, mesh_id, "the session is on a new mesh");
+    assert_eq!(s.bake_meshes.high.len(), 1, "the high poly stays");
+    assert!(s.doc.bake_paint.keys().any(|(_, target)| *target == texturecraft_engine::core::BakePaintTarget::Skew), "the skew map stays");
+    assert!(s.modified, "the project differs from the saved one");
+    assert_eq!(s.images.len(), 1, "image resources are decoded in the new session");
+}

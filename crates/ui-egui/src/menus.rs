@@ -57,6 +57,7 @@ pub const CATALOG: &[Item] = &[
     sep("Edit"),
     it("Edit", "Project Configuration...", "ui.projectConfig", None),
     it("Edit", "Reimport mesh", "file.reimportMesh", Some("Ctrl+Shift+R")),
+    it("Edit", "Change mesh...", "file.changeMesh", None),
     it("Edit", "Settings...", "ui.settings", None),
     it("Mode", "Bake Mesh Maps", "ui.mode.bake", Some("F8")),
     it("Mode", "Painting", "ui.mode.paint", Some("F9")),

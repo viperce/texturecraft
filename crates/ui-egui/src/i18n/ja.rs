@@ -638,6 +638,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Redo", "やり直し"),
     ("Reimport mesh", "メッシュを再インポート"),
+    ("Change mesh...", "メッシュを変更..."),
+    ("Relative to the bounding box diagonal.", "バウンディングボックスの対角線に対する相対値。"),
     ("Remove", "削除"),
     ("Remove channel", "チャンネルを削除"),
     ("Remove effect", "エフェクトを削除"),

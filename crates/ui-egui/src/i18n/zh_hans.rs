@@ -590,6 +590,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Redo", "重做"),
     ("Reimport mesh", "重新导入网格"),
+    ("Change mesh...", "更换网格..."),
+    ("Relative to the bounding box diagonal.", "相对于包围盒对角线。"),
     ("Remove", "移除"),
     ("Remove channel", "移除通道"),
     ("Remove effect", "移除效果"),
