@@ -504,3 +504,10 @@ fn ply_face_element_before_vertex_element() {
     let bad = format!("{head}3 0 1 5\n0 0 0\n1 0 0\n0 1 0\n");
     assert!(import_mesh_bytes("a.ply", bad.as_bytes()).is_err());
 }
+
+#[test]
+fn obj_backslash_continuation_joins_lines() {
+    let obj = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nf 1 2 \\\n 3 4\n";
+    let mesh = import_mesh_bytes("a.obj", obj).expect("continued face imports");
+    assert_eq!(mesh.mesh.triangle_count(), 2);
+}

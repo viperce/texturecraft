@@ -11,8 +11,29 @@ pub(crate) fn read(bytes: &[u8]) -> Result<RawMesh> {
     crate::guard(KIND, || read_inner(bytes))
 }
 
+/// Joins lines ending in a backslash with the next line (OBJ line continuation).
+fn join_continuations(text: std::borrow::Cow<'_, str>) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\\') {
+        return text;
+    }
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        match line.trim_end().strip_suffix('\\') {
+            Some(head) => {
+                out.push_str(head);
+                out.push(' ');
+            }
+            None => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
-    let text = String::from_utf8_lossy(bytes);
+    let text = join_continuations(String::from_utf8_lossy(bytes));
     // Material names come from `usemtl` (MTL files are never read): tobj only assigns a face's
     // material when a library defines it, so every library request gets a synthetic one.
     let mut names: Vec<&str> = Vec::new();
