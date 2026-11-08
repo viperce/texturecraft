@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use rayon::prelude::*;
 
-use texturecraft_geom::glam::Vec3;
+use texturecraft_geom::glam::{Vec2, Vec3};
 use texturecraft_geom::{Bvh, Mesh, NO_TRI, UvGBuffer};
 use texturecraft_texel::{TILE, TileImage, from_u16, to_u16};
 
@@ -116,24 +116,33 @@ pub fn rasterize(canvas: &mut StrokeCanvas, ctx: &RasterCtx, stamps: &[Stamp]) {
         let ext = Vec3::splat(s.radius * s.depth.max(1.0) * 1.42);
         tris.clear();
         ctx.bvh.query_box(s.center - ext, s.center + ext, |t| tris.push(t));
-        // Each texel belongs to one triangle, so triangles scan independently (in parallel for
-        // large stamps); stamp alphas combine commutatively, so the order does not matter.
+        // Triangles scan independently (in parallel for large stamps); stamp alphas combine
+        // commutatively, so the order does not matter.
         let scan = |&t: &u32| scan_triangle(ctx, s, t, w, h, fade_lo, fade_hi);
         let parts: Vec<TriTexels> = if tris.len() > 16 { tris.par_iter().filter_map(scan).collect() } else { tris.iter().filter_map(scan).collect() };
         // The stamp center in texels: the footprint texel nearest to it on the surface.
         let mut center = ([0.0f32; 2], f32::MAX);
-        for (texels, c) in parts {
+        let mut shared = false;
+        for (texels, c, sh) in parts {
             if c.1 < center.1 {
                 center = c;
             }
+            shared |= sh;
             canvas.texels.extend(texels);
+        }
+        if shared {
+            // Texels reached through shared UVs can also come from a neighbouring triangle (on
+            // their common edge): keep each texel once, with its strongest alpha.
+            canvas.texels.sort_unstable_by(|a, b| (a.1, a.0).cmp(&(b.1, b.0)).then(b.2.total_cmp(&a.2)));
+            canvas.texels.dedup_by_key(|t| (t.0, t.1));
         }
         canvas.add_stamp(center.0);
     }
 }
 
 /// Texels of one triangle a stamp covers, and the one nearest the stamp center.
-type TriTexels = (Vec<(u32, u32, f32)>, ([f32; 2], f32));
+/// The flag is set when some texels are owned by another triangle in the G-buffer (shared UVs).
+type TriTexels = (Vec<(u32, u32, f32)>, ([f32; 2], f32), bool);
 
 #[allow(clippy::too_many_arguments)]
 fn scan_triangle(ctx: &RasterCtx, s: &Stamp, t: u32, w: u32, h: u32, fade_lo: f32, fade_hi: f32) -> Option<TriTexels> {
@@ -152,15 +161,26 @@ fn scan_triangle(ctx: &RasterCtx, s: &Stamp, t: u32, w: u32, h: u32, fade_lo: f3
     let uv_area = (*ub - *ua).perp_dot(*uc - *ua).abs() * w as f32 * h as f32;
     let world_area = (*pb - *pa).cross(*pc - *pa).length();
     let shape = ctx.shape.at_radius(s.radius * (uv_area / world_area).sqrt());
+    let uvp = [*ua * Vec2::new(w as f32, h as f32), *ub * Vec2::new(w as f32, h as f32), *uc * Vec2::new(w as f32, h as f32)];
+    let mut shared = false;
     let mut texels = Vec::new();
     let mut center = ([0.0f32; 2], f32::MAX);
     for y in y0..y1 {
         for x in x0..x1 {
             let i = (y * w + x) as usize;
-            if ctx.gbuf.tri.get(i).copied().unwrap_or(NO_TRI) != t {
+            let owner = ctx.gbuf.tri.get(i).copied().unwrap_or(NO_TRI);
+            let [b1, b2] = if owner == t {
+                let Some(b) = ctx.gbuf.bary.get(i).copied() else { continue };
+                b
+            } else if owner != NO_TRI {
+                // The texel is owned by another triangle mapped to the same UVs (mirrored or
+                // instanced parts): this triangle's surface point there gets painted too.
+                let Some(b) = uv_bary(uvp, [x as f32 + 0.5, y as f32 + 0.5]) else { continue };
+                shared = true;
+                b
+            } else {
                 continue;
-            }
-            let Some([b1, b2]) = ctx.gbuf.bary.get(i).copied() else { continue };
+            };
             let b0 = 1.0 - b1 - b2;
             let p = *pa * b0 + *pb * b1 + *pc * b2;
             let d = p - s.center;
@@ -199,7 +219,27 @@ fn scan_triangle(ctx: &RasterCtx, s: &Stamp, t: u32, w: u32, h: u32, fade_lo: f3
             }
         }
     }
-    (center.1 < f32::MAX || !texels.is_empty()).then_some((texels, center))
+    (center.1 < f32::MAX || !texels.is_empty()).then_some((texels, center, shared))
+}
+
+/// Barycentric weights (of vertices 1 and 2) of texel point `p` in the texel-space triangle
+/// `uv`, edges included as in the G-buffer; None outside or for a degenerate triangle.
+fn uv_bary(uv: [Vec2; 3], p: [f32; 2]) -> Option<[f32; 2]> {
+    let edge = |a: Vec2, b: Vec2, p: Vec2| (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    let [pa, pb, pc] = uv;
+    let p = Vec2::from(p);
+    let area = edge(pa, pb, pc);
+    if area.abs() < 1e-12 {
+        return None;
+    }
+    let s = area.signum();
+    let (w0, w1, w2) = (edge(pb, pc, p) * s, edge(pc, pa, p) * s, edge(pa, pb, p) * s);
+    let eps = -1e-6 * area.abs();
+    if w0 < eps || w1 < eps || w2 < eps {
+        return None;
+    }
+    let inv = 1.0 / area.abs();
+    Some([w1 * inv, w2 * inv])
 }
 
 /// Stroke alpha covering whole triangles (polygon fill): every texel of `tris` gets alpha 1.
@@ -272,6 +312,62 @@ mod tests {
         let below = RasterCtx { eye: Vec3::new(0.0, -5.0, 0.0), ..ctx };
         rasterize(&mut c2, &below, &[st]);
         assert!(c2.dirty.is_empty());
+    }
+
+    #[test]
+    fn parts_sharing_uvs_are_both_paintable() {
+        // Two planes with identical UVs, the second moved 10 units along Z.
+        let p = primitives::plane(2.0, 8);
+        let n = p.positions.len() as u32;
+        let positions: Vec<Vec3> = p.positions.iter().copied().chain(p.positions.iter().map(|v| *v + Vec3::new(0.0, 0.0, 10.0))).collect();
+        let uvs = p.uvs.iter().chain(p.uvs.iter()).copied().collect();
+        let indices = p.indices.iter().copied().chain(p.indices.iter().map(|i| i + n)).collect();
+        let m = Mesh::from_parts(positions, None, uvs, indices, "m").unwrap();
+        let bvh = Bvh::new(&m);
+        let g = UvGBuffer::new(&m, 0, 128, 128);
+        assert!(g.overlaps > 0);
+        let (lone, lone_bvh) = (primitives::plane(2.0, 8), Bvh::new(&p));
+        let lone_g = UvGBuffer::new(&lone, 0, 128, 128);
+        let stamp = |z: f32| Stamp {
+            center: Vec3::new(0.0, 0.0, z),
+            normal: Vec3::Y,
+            tangent: Vec3::X,
+            bitangent: Vec3::Z,
+            radius: 0.25,
+            flow: 1.0,
+            hardness: 0.9,
+            depth: 1.0,
+            seed: 0,
+            copy: false,
+        };
+        for z in [0.0, 10.0] {
+            let ctx = RasterCtx {
+                mesh: &m,
+                bvh: &bvh,
+                gbuf: &g,
+                material: 0,
+                depth: None,
+                eye: Vec3::new(0.0, 5.0, z),
+                backface_culling: true,
+                angle_fade: (70.0, 85.0),
+                shape: Shape { alpha: crate::BrushAlpha::Round, image: None, library: None, level: 0 },
+            };
+            let mut canvas = StrokeCanvas::new(128, 128);
+            rasterize(&mut canvas, &ctx, &[stamp(z)]);
+            let at = |x: u32, y: u32| from_u16(canvas.alpha.get(x, y)[0]);
+            assert!(at(64, 64) > 0.99, "part at z={z}: {}", at(64, 64));
+            assert!(at(64 + 12, 64) > 0.9, "part at z={z}: {}", at(64 + 12, 64));
+            assert!(at(64 + 20, 64) < 0.01, "part at z={z}: {}", at(64 + 20, 64));
+            // Same texels and alphas as painting a lone plane (no texel counted twice).
+            let mut reference = StrokeCanvas::new(128, 128);
+            let lone_ctx = RasterCtx { mesh: &lone, bvh: &lone_bvh, gbuf: &lone_g, eye: Vec3::new(0.0, 5.0, 0.0), ..ctx };
+            rasterize(&mut reference, &lone_ctx, &[stamp(0.0)]);
+            for y in 0..128 {
+                for x in 0..128 {
+                    assert_eq!(canvas.alpha.get(x, y), reference.alpha.get(x, y), "part at z={z}, texel ({x},{y})");
+                }
+            }
+        }
     }
 }
 
