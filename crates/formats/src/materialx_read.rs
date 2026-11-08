@@ -199,7 +199,7 @@ struct Doc<'a> {
     /// Every node by name: the document's own, and each nodegraph's (qualified `graph/node`).
     nodes: HashMap<String, &'a El>,
     /// Each nodegraph's outputs: `graph/output` to the node name inside (qualified).
-    outputs: HashMap<String, String>,
+    outputs: Vec<(String, String)>,
     tiling: Option<[f32; 2]>,
     warnings: Vec<String>,
 }
@@ -218,7 +218,7 @@ fn numbers(text: &str) -> Option<Vec<f32>> {
 impl<'a> Doc<'a> {
     fn new(root: &'a El) -> Doc<'a> {
         let mut nodes = HashMap::new();
-        let mut outputs = HashMap::new();
+        let mut outputs = Vec::new();
         for c in &root.children {
             match (c.name.as_str(), c.attr("name")) {
                 ("nodegraph", Some(g)) => {
@@ -226,7 +226,7 @@ impl<'a> Doc<'a> {
                         let Some(name) = n.attr("name") else { continue };
                         if n.name == "output" {
                             if let Some(from) = n.attr("nodename") {
-                                outputs.insert(format!("{g}/{name}"), format!("{g}/{from}"));
+                                outputs.push((format!("{g}/{name}"), format!("{g}/{from}")));
                             }
                         } else {
                             nodes.insert(format!("{g}/{name}"), n);
@@ -254,8 +254,9 @@ impl<'a> Doc<'a> {
         }
         let target = match (input.attr("nodegraph"), input.attr("output"), input.attr("nodename")) {
             (Some(g), out, _) => {
-                let out = out.map(str::to_owned).or_else(|| self.outputs.keys().find_map(|k| k.strip_prefix(&format!("{g}/")).map(str::to_owned)));
-                out.and_then(|o| self.outputs.get(&format!("{g}/{o}")).cloned())
+                let prefix = format!("{g}/");
+                let wanted = out.map(|o| format!("{prefix}{o}"));
+                self.outputs.iter().find(|(k, _)| wanted.as_deref().map_or_else(|| k.starts_with(&prefix), |w| k == w)).map(|(_, v)| v.clone())
             }
             (None, _, Some(n)) => {
                 Some(scope.map_or_else(|| n.to_owned(), |g| format!("{g}/{n}"))).filter(|q| self.nodes.contains_key(q)).or_else(|| Some(n.to_owned()))
@@ -454,6 +455,24 @@ mod tests {
         assert!(m.warnings.is_empty(), "{:?}", m.warnings);
         let extreme = OPENPBR.replace(r#"value="4, 2""#, r#"value="1e9, 1e-9""#);
         assert_eq!(read_materialx(extreme.as_bytes(), None).unwrap().uv_tiling, [1000.0, 0.001], "clamped like a fill's UV scale");
+    }
+
+    #[test]
+    fn nodegraph_input_without_output_uses_the_first_output() {
+        let x = r#"<materialx version="1.38">
+  <nodegraph name="NG">
+    <tiledimage name="a" type="color3"><input name="file" type="filename" value="first.png" /></tiledimage>
+    <tiledimage name="b" type="color3"><input name="file" type="filename" value="second.png" /></tiledimage>
+    <output name="o1" type="color3" nodename="a" />
+    <output name="o2" type="color3" nodename="b" />
+  </nodegraph>
+  <standard_surface name="S" type="surfaceshader"><input name="base_color" type="color3" nodegraph="NG" /></standard_surface>
+  <surfacematerial name="M" type="material"><input name="surfaceshader" type="surfaceshader" nodename="S" /></surfacematerial>
+</materialx>"#;
+        for _ in 0..50 {
+            let m = read_materialx(x.as_bytes(), None).unwrap();
+            assert_eq!(get(&m, Channel::BaseColor), Some(&Value::Image("first.png".into())));
+        }
     }
 
     #[test]
