@@ -26,4 +26,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
+# Reinterpret decoded RGBA f32 samples as pixels without a copy (`try_cast_vec`).
+bytemuck = { workspace = true, features = ["extern_crate_alloc"] }
 base64 = { workspace = true }
