@@ -54,7 +54,6 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Always", "始终"),
     ("Ambient Occlusion", "环境光遮蔽"),
     ("Ambient occlusion", "环境光遮蔽"),
-    ("Ambient occlusion intensity", "环境光遮蔽强度"),
     ("Amount", "数量"),
     ("Anchor point", "锚点"),
     ("Anchor: {name}", "锚点：{name}"),

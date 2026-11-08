@@ -60,7 +60,6 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Always", "دائماً"),
     ("Ambient Occlusion", "الانسداد المحيطي (AO)"),
     ("Ambient occlusion", "الانسداد المحيطي (AO)"),
-    ("Ambient occlusion intensity", "شدة الانسداد المحيطي"),
     ("Amount", "المقدار"),
     ("Anchor point", "نقطة ارتكاز"),
     ("Anchor: {name}", "نقطة ارتكاز: {name}"),

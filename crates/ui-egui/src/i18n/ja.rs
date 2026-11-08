@@ -66,7 +66,6 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Always", "常に"),
     ("Ambient Occlusion", "アンビエントオクルージョン"),
     ("Ambient occlusion", "アンビエントオクルージョン"),
-    ("Ambient occlusion intensity", "アンビエントオクルージョンの強度"),
     ("Amount", "量"),
     ("Anchor point", "アンカーポイント"),
     ("Anchor: {name}", "アンカー: {name}"),

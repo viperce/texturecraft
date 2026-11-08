@@ -63,7 +63,6 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Always", "Immer"),
     ("Ambient Occlusion", "Ambient Occlusion"),
     ("Ambient occlusion", "Ambient occlusion"),
-    ("Ambient occlusion intensity", "Ambient-Occlusion-Intensität"),
     ("Amount", "Stärke"),
     ("Anchor point", "Ankerpunkt"),
     ("Anchor: {name}", "Anker: {name}"),
