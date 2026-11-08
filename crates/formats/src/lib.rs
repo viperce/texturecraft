@@ -46,7 +46,7 @@ pub use mesh_export::{GlbTextures, NamedFiles, UsdExport, UsdFormat, glb_bytes, 
 pub use mesh_import::{HighPolyMesh, ImportedMesh, MeshFile, MeshReport, import_high_poly_bytes, import_mesh_bytes, mesh_report, self_contained_mesh};
 #[cfg(not(target_arch = "wasm32"))]
 pub use presets::load_preset;
-pub use presets::{builtin_preset, builtin_presets, preset_from_json, preset_to_json};
+pub use presets::{builtin_preset, builtin_presets, preset_from_json, preset_max_size, preset_to_json};
 pub use project_file::{BakePaintData, ProjectFile, load_project_bytes, sanitize_resource_name, save_project_bytes};
 
 #[cfg(not(target_arch = "wasm32"))]
