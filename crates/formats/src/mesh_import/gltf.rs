@@ -153,6 +153,9 @@ fn add_primitive(raw: &mut RawMesh, attrs: &mut Attrs, prim: &gltf::Primitive, m
     if !raw.base_colors.iter().any(|c| c.material == name) {
         base_color(raw, &prim.material(), &name, buffers);
     }
+    if !raw.materials.iter().any(|c| c.material == name) {
+        pbr(raw, &prim.material(), &name, buffers);
+    }
     let base = raw.positions.len() as u32;
     let tex_ok = texcoords.as_ref().is_some_and(|t| t.len() == n);
     if tex_ok {
@@ -205,20 +208,54 @@ fn base_color(raw: &mut RawMesh, material: &gltf::Material, name: &str, buffers:
             raw.warnings.push(format!("the base color texture of {name} uses UV set {}; only the first is read", info.tex_coord()));
             return None;
         }
-        match info.texture().source().source() {
-            gltf::image::Source::View { view, .. } => {
-                let data = buffers.get(view.buffer().index())?;
-                data.0.get(view.offset()..view.offset().checked_add(view.length())?).map(<[u8]>::to_vec)
-            }
-            // Files next to the .gltf arrive as data URIs; anything else can't be read.
-            gltf::image::Source::Uri { uri, .. } if uri.starts_with("data:") => {
-                gltf::buffer::Data::from_source(gltf::buffer::Source::Uri(uri), None).ok().map(|d| d.0)
-            }
-            gltf::image::Source::Uri { .. } => None,
-        }
+        texture_bytes(&info.texture(), buffers)
     });
     if image.is_some() || factor != Vec4::ONE {
         raw.base_colors.push(super::RawBaseColor { material: name.to_string(), factor, image });
+    }
+}
+
+/// Record `material`'s metallic, roughness, normal, occlusion and emissive inputs (the base
+/// color goes through [`base_color`]).
+fn pbr(raw: &mut RawMesh, material: &gltf::Material, name: &str, buffers: &[gltf::buffer::Data]) {
+    let mut read = |what: &str, texture: Option<(gltf::Texture, u32)>| {
+        let (texture, set) = texture?;
+        if set != 0 {
+            raw.warnings.push(format!("the {what} texture of {name} uses UV set {set}; only the first is read"));
+            return None;
+        }
+        texture_bytes(&texture, buffers)
+    };
+    let pbr = material.pbr_metallic_roughness();
+    let metallic_roughness_image = read("metallic/roughness", pbr.metallic_roughness_texture().map(|t| (t.texture(), t.tex_coord())));
+    let normal_image = read("normal", material.normal_texture().map(|t| (t.texture(), t.tex_coord())));
+    let occlusion_image = read("occlusion", material.occlusion_texture().map(|t| (t.texture(), t.tex_coord())));
+    let emissive_image = read("emissive", material.emissive_texture().map(|t| (t.texture(), t.tex_coord())));
+    raw.materials.push(super::MaterialTextures {
+        material: name.to_string(),
+        metallic: Some(pbr.metallic_factor()),
+        roughness: Some(pbr.roughness_factor()),
+        metallic_roughness_image,
+        normal_image,
+        occlusion_image,
+        emissive: Some(Vec3::from(material.emissive_factor())),
+        emissive_image,
+        ..Default::default()
+    });
+}
+
+/// The encoded image of `texture` (GLB buffer view or data URI).
+fn texture_bytes(texture: &gltf::Texture, buffers: &[gltf::buffer::Data]) -> Option<Vec<u8>> {
+    match texture.source().source() {
+        gltf::image::Source::View { view, .. } => {
+            let data = buffers.get(view.buffer().index())?;
+            data.0.get(view.offset()..view.offset().checked_add(view.length())?).map(<[u8]>::to_vec)
+        }
+        // Files next to the .gltf arrive as data URIs; anything else can't be read.
+        gltf::image::Source::Uri { uri, .. } if uri.starts_with("data:") => {
+            gltf::buffer::Data::from_source(gltf::buffer::Source::Uri(uri), None).ok().map(|d| d.0)
+        }
+        gltf::image::Source::Uri { .. } => None,
     }
 }
 
