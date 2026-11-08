@@ -279,16 +279,37 @@ impl LinkJob {
     }
 }
 
-/// Decode every map of `m` (validating them) with the channel it feeds.
+/// Most texels one map may have: 8192 x 8192, the largest texture set. Decoded as RGBA f32 that is
+/// 1 GiB, so without this a single 16384 x 16384 map (a tiny PNG) would decode to 4 GiB.
+const MAX_MAP_TEXELS: u64 = 8192 * 8192;
+/// Most texels all of a material's maps may decode to together: nine usages at 8192 x 8192.
+const MAX_DECODED_TEXELS: u64 = 9 * MAX_MAP_TEXELS;
+
+/// Decode every map of `m` (validating them) with the channel it feeds. A usage listed more than
+/// once is decoded once (the last listing wins, as it did when each listing was painted over the
+/// one before), and the maps together stay within [`MAX_DECODED_TEXELS`], so a `.mcmat` can't
+/// multiply one small image into gigabytes of pixels.
 fn decoded_maps(m: &PortableMaterial) -> Result<Vec<(Channel, Vec<u8>, texturecraft_formats::DecodedImage)>> {
-    m.maps
-        .iter()
-        .filter_map(|(usage, bytes)| Some((Channel::ALL.into_iter().find(|c| c.id() == usage)?, bytes)))
-        .map(|(c, bytes)| {
-            let img = texturecraft_formats::decode_image(bytes).map_err(|e| EngineError::Other(format!("{} map: {e}", c.id())))?;
-            Ok((c, bytes.clone(), img))
-        })
-        .collect()
+    decoded_maps_within(m, MAX_DECODED_TEXELS)
+}
+
+/// Decode the maps of `m` (one per usage, the last listing wins) within a total budget of `max_texels`.
+/// The size of each map is checked from its header before decoding: a map over [`MAX_MAP_TEXELS`], or one
+/// that no longer fits in what is left of the budget, is refused with an error that names the map.
+fn decoded_maps_within(m: &PortableMaterial, max_texels: u64) -> Result<Vec<(Channel, Vec<u8>, texturecraft_formats::DecodedImage)>> {
+    let listed: Vec<(Channel, &Vec<u8>)> =
+        m.maps.iter().filter_map(|(usage, bytes)| Some((Channel::ALL.into_iter().find(|c| c.id() == usage)?, bytes))).collect();
+    let mut left = max_texels;
+    let mut out = Vec::new();
+    for (i, (c, bytes)) in listed.iter().enumerate() {
+        if listed.iter().skip(i + 1).any(|(later, _)| later == c) {
+            continue;
+        }
+        let img = texturecraft_formats::decode_image_within(bytes, left.min(MAX_MAP_TEXELS)).map_err(|e| EngineError::Other(format!("{} map: {e}", c.id())))?;
+        left = left.saturating_sub(u64::from(img.width) * u64::from(img.height));
+        out.push((*c, (*bytes).clone(), img));
+    }
+    Ok(out)
 }
 
 impl Session {
@@ -446,4 +467,72 @@ fn put_maps(s: &mut Session, stem: &str, maps: &[(Channel, Vec<u8>, texturecraft
         names.push(name);
     }
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use texturecraft_formats::mcmat::{Manifest, MapEntry};
+
+    /// A blank `side` x `side` RGBA PNG, as bytes.
+    fn png(side: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::RgbaImage::new(side, side).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    }
+
+    /// A portable material that lists the given (usage, image bytes) maps in order.
+    fn material(maps: Vec<(&str, Vec<u8>)>) -> PortableMaterial {
+        let manifest = Manifest {
+            format: "craft-material".into(),
+            version: 1,
+            name: "M".into(),
+            graph: "M".into(),
+            size: [4, 4],
+            maps: maps.iter().map(|(usage, _)| MapEntry { usage: usage.to_string(), file: "m.png".into() }).collect(),
+            parameters: vec![],
+            inputs: vec![],
+            presets: vec![],
+            source: "source.mcraft".into(),
+        };
+        PortableMaterial { manifest, maps: maps.into_iter().map(|(u, b)| (u.to_string(), b)).collect(), source: vec![] }
+    }
+
+    /// However many times one usage is listed, it is decoded only once.
+    #[test]
+    fn a_usage_listed_many_times_is_decoded_once() {
+        let m = material((0..64).map(|_| ("baseColor", png(4))).collect());
+        assert_eq!(decoded_maps(&m).unwrap().len(), 1, "64 listings of one usage, one decoded image");
+    }
+
+    /// When a usage is listed twice, the later image is the one that is kept.
+    #[test]
+    fn the_last_listing_of_a_usage_wins() {
+        let m = material(vec![("baseColor", png(4)), ("roughness", png(2)), ("baseColor", png(8))]);
+        let maps = decoded_maps(&m).unwrap();
+        let base = maps.iter().find(|(c, ..)| *c == Channel::BaseColor).unwrap();
+        assert_eq!(base.2.width, 8);
+        assert_eq!(maps.len(), 2);
+    }
+
+    /// A single map over the per-map limit is refused even when the total budget would allow it.
+    #[test]
+    fn one_map_over_the_per_map_limit_is_refused_though_the_total_would_allow_it() {
+        // 8193 x 8192 grey: one column over 8192 x 8192, tiny as a PNG. The nine-map total allows it,
+        // the per-map limit must not (a 16384 x 16384 map would decode to 4 GiB).
+        let mut grey = Vec::new();
+        image::GrayImage::new(8193, 8192).write_to(&mut std::io::Cursor::new(&mut grey), image::ImageFormat::Png).unwrap();
+        assert!(grey.len() < 1 << 20, "{}", grey.len());
+        let m = material(vec![("baseColor", grey)]);
+        assert!(decoded_maps(&m).is_err());
+    }
+
+    /// The maps together stay within the total budget: three 8 x 8 maps fit in 200 texels but not in 150.
+    #[test]
+    fn decoded_pixels_are_bounded_across_maps() {
+        let m = material(vec![("baseColor", png(8)), ("roughness", png(8)), ("metallic", png(8))]);
+        // 3 x 64 texels fit in 200, but not in 150.
+        assert_eq!(decoded_maps_within(&m, 200).unwrap().len(), 3);
+        assert!(decoded_maps_within(&m, 150).is_err(), "the third map goes over the budget");
+    }
 }

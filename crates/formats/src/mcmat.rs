@@ -20,6 +20,14 @@ const FORMAT: &str = "craft-material";
 const VERSION: u32 = 1;
 /// Largest entry read (maps are at most 8192² × 16 bits, compressed).
 const MAX_ENTRY: u64 = 512 << 20;
+/// Most bytes read from one file in all (the manifest, every map and the source package).
+/// Without it a manifest that lists one compressible entry many times would be read, and kept,
+/// once per listing.
+const MAX_TOTAL: u64 = 2 << 30;
+/// Largest `material.json` (a manifest is a few kilobytes; 1 MiB holds thousands of parameters).
+const MAX_MANIFEST: u64 = 1 << 20;
+/// Most maps a manifest may list (there are nine usages).
+const MAX_MAPS: usize = 64;
 const KIND: &str = "MaterialCraft material";
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -68,25 +76,37 @@ fn malformed(msg: impl Into<String>) -> FormatError {
 
 /// Read `.mcmat` bytes.
 pub fn read_mcmat(bytes: &[u8]) -> Result<PortableMaterial> {
+    read_within(bytes, MAX_ENTRY, MAX_TOTAL)
+}
+
+/// [`read_mcmat`] with the per-entry and whole-file byte limits as parameters (tests use small ones).
+fn read_within(bytes: &[u8], max_entry: u64, max_total: u64) -> Result<PortableMaterial> {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| malformed(e.to_string()))?;
-    let mut read = |name: &str| -> Result<Vec<u8>> {
+    let mut total = 0u64;
+    let mut read = |name: &str, cap: u64| -> Result<Vec<u8>> {
         let mut out = Vec::new();
         let f = z.by_name(name).map_err(|_| malformed(format!("{name} is missing")))?;
-        f.take(MAX_ENTRY + 1).read_to_end(&mut out).map_err(|e| malformed(format!("{name}: {e}")))?;
-        if out.len() as u64 > MAX_ENTRY {
+        // Never read past the entry's cap or what is left of the file's budget.
+        let allowed = cap.min(max_entry).min(max_total.saturating_sub(total));
+        f.take(allowed + 1).read_to_end(&mut out).map_err(|e| malformed(format!("{name}: {e}")))?;
+        if out.len() as u64 > allowed {
             return Err(FormatError::TooLarge(name.to_string()));
         }
+        total += out.len() as u64;
         Ok(out)
     };
-    let manifest: Manifest = serde_json::from_slice(&read("material.json")?).map_err(|e| malformed(format!("material.json: {e}")))?;
+    let manifest: Manifest = serde_json::from_slice(&read("material.json", MAX_MANIFEST)?).map_err(|e| malformed(format!("material.json: {e}")))?;
     if manifest.format != FORMAT {
         return Err(malformed(format!("format `{}`", manifest.format)));
     }
     if manifest.version > VERSION {
         return Err(FormatError::Unsupported(format!("{KIND} version {} (this version reads up to {VERSION})", manifest.version)));
     }
-    let maps = manifest.maps.iter().map(|m| Ok((m.usage.clone(), read(&m.file)?))).collect::<Result<Vec<_>>>()?;
-    let source = read(&manifest.source)?;
+    if manifest.maps.len() > MAX_MAPS {
+        return Err(FormatError::TooLarge(format!("{} maps listed (limit {MAX_MAPS})", manifest.maps.len())));
+    }
+    let maps = manifest.maps.iter().map(|m| Ok((m.usage.clone(), read(&m.file, MAX_ENTRY)?))).collect::<Result<Vec<_>>>()?;
+    let source = read(&manifest.source, MAX_ENTRY)?;
     Ok(PortableMaterial { manifest, maps, source })
 }
 
@@ -165,6 +185,70 @@ mod tests {
         assert_eq!(m.source, b"pkg");
         assert!(matches!(read_mcmat(&sample(2)), Err(FormatError::Unsupported(_))));
         assert!(read_mcmat(b"junk").is_err());
+    }
+
+    /// A `.mcmat` whose manifest lists `maps` (file names) and whose zip holds those files.
+    fn with_maps(maps: &[&str], files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let list: Vec<_> = maps.iter().map(|f| serde_json::json!({"usage": "baseColor", "file": f})).collect();
+        let manifest =
+            serde_json::json!({"format": "craft-material", "version": 1, "name": "M", "graph": "M", "size": [4, 4], "maps": list, "source": "source.mcraft"});
+        let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let o = zip::write::SimpleFileOptions::default();
+        z.start_file("material.json", o).unwrap();
+        z.write_all(manifest.to_string().as_bytes()).unwrap();
+        z.start_file("source.mcraft", o).unwrap();
+        z.write_all(b"pkg").unwrap();
+        for (name, bytes) in files {
+            z.start_file(*name, o).unwrap();
+            z.write_all(bytes).unwrap();
+        }
+        z.finish().unwrap().into_inner()
+    }
+
+    /// A manifest over the size limit is refused as too large, without being read.
+    #[test]
+    fn an_oversized_manifest_is_refused() {
+        // A manifest is a few kilobytes; one over MAX_MANIFEST (here a 2 MiB name) is not read.
+        let manifest = serde_json::json!({"format": "craft-material", "version": 1, "name": "x".repeat(2 << 20), "graph": "M", "size": [4, 4], "maps": [], "source": "source.mcraft"});
+        let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let o = zip::write::SimpleFileOptions::default();
+        z.start_file("material.json", o).unwrap();
+        z.write_all(manifest.to_string().as_bytes()).unwrap();
+        z.start_file("source.mcraft", o).unwrap();
+        z.write_all(b"pkg").unwrap();
+        let bytes = z.finish().unwrap().into_inner();
+        assert!(matches!(read_mcmat(&bytes), Err(FormatError::TooLarge(_))));
+    }
+
+    /// More maps than the limit are refused, while a normal count still reads.
+    #[test]
+    fn too_many_maps_are_refused() {
+        let names: Vec<String> = (0..=MAX_MAPS).map(|_| "m.png".to_string()).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let bytes = with_maps(&refs, &[("m.png", vec![1; 8])]);
+        assert!(matches!(read_mcmat(&bytes), Err(FormatError::TooLarge(_))));
+        // A normal count still reads.
+        let bytes = with_maps(&["m.png"; 3], &[("m.png", vec![1; 8])]);
+        assert_eq!(read_mcmat(&bytes).unwrap().maps.len(), 3);
+    }
+
+    /// An entry listed over and over stops at the total budget, and an entry over the per-entry cap is refused.
+    #[test]
+    fn one_entry_listed_again_and_again_is_bounded_by_the_total() {
+        // With small limits: 100 KiB entries, 250 KiB for the whole file. Zeros compress to nearly
+        // nothing, so the zip stays tiny however often the manifest lists the entry.
+        let each = vec![0u8; 100 << 10];
+        let (entry, total) = (110 << 10, 250 << 10);
+        // One listing, and two, fit.
+        assert!(read_within(&with_maps(&["e.bin"], &[("e.bin", each.clone())]), entry, total).is_ok());
+        assert!(read_within(&with_maps(&["e.bin"; 2], &[("e.bin", each.clone())]), entry, total).is_ok());
+        // Listed until the budget is spent, it stops there instead of reading it all.
+        let bytes = with_maps(&["e.bin"; 40], &[("e.bin", each.clone())]);
+        assert!(bytes.len() < 10 << 10, "the zip stays small: {}", bytes.len());
+        assert!(matches!(read_within(&bytes, entry, total), Err(FormatError::TooLarge(_))));
+        // An entry over the per-entry cap is refused on its own.
+        let big = vec![0u8; 120 << 10];
+        assert!(matches!(read_within(&with_maps(&["big.bin"], &[("big.bin", big)]), entry, total), Err(FormatError::TooLarge(_))));
     }
 
     #[test]
