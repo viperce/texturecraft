@@ -57,7 +57,20 @@ pub fn self_contained_mesh(name: &str, bytes: Vec<u8>, read: &mut dyn FnMut(&str
 pub fn read_mesh_file(path: &std::path::Path) -> Result<MeshFile> {
     let bytes = crate::read_capped(path, MAX_MESH_FILE_BYTES)?;
     let dir = path.parent().unwrap_or_else(|| std::path::Path::new(""));
-    self_contained_mesh(&path.to_string_lossy(), bytes, &mut |rel| crate::read_capped(&dir.join(rel), MAX_MESH_FILE_BYTES).ok())
+    self_contained_mesh(&path.to_string_lossy(), bytes, &mut |rel| read_inside(dir, rel))
+}
+
+/// `rel` (already checked by [`below`]) read from below `dir`, or None when it is missing, too big,
+/// or, once symbolic links and junctions are followed, is not inside `dir`: `below` only looks at
+/// the text of the path, so a link in the folder could otherwise lead to any file.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_inside(dir: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
+    let root = std::fs::canonicalize(if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir }).ok()?;
+    let file = std::fs::canonicalize(dir.join(rel)).ok()?;
+    if !file.starts_with(&root) {
+        return None;
+    }
+    crate::read_capped(&file, MAX_MESH_FILE_BYTES).ok()
 }
 
 /// `asset` as a path below the mesh's folder (`/`-separated, `.` and `..` resolved), or None when
@@ -125,6 +138,53 @@ fn image_mime(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A link `link` inside `dir` leading to `target` (a folder): a symbolic link on Unix, a junction
+    /// on Windows. False when the system refuses to make one.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn link_dir(link: &std::path::Path, target: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link).is_ok();
+        #[cfg(windows)]
+        return std::process::Command::new("cmd.exe").args(["/D", "/C", "mklink", "/J"]).arg(link).arg(target).output().is_ok_and(|o| o.status.success());
+        #[cfg(not(any(unix, windows)))]
+        return false;
+    }
+
+    /// Files are read through ordinary paths and links that stay inside the folder, but not through a link
+    /// (folder or file) that leads outside it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_link_in_the_mesh_folder_cannot_lead_outside_it() {
+        let base = std::env::temp_dir().join(format!("tc-mesh-link-{}", std::process::id()));
+        let (dir, outside) = (base.join("model"), base.join("secret"));
+        std::fs::create_dir_all(dir.join("tex")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("key.txt"), b"private").unwrap();
+        std::fs::write(dir.join("tex/a.png"), b"inside").unwrap();
+        assert_eq!(read_inside(&dir, "tex/a.png").as_deref(), Some(&b"inside"[..]), "ordinary files below the folder are read");
+        assert_eq!(read_inside(&dir, "tex/missing.png"), None);
+        if link_dir(&dir.join("out"), &outside) {
+            assert_eq!(read_inside(&dir, "out/key.txt"), None, "through a link to another folder");
+        } else {
+            eprintln!("skipped the link case: this system would not make a link");
+        }
+        // A link that stays inside the folder is an ordinary shortcut and still works.
+        if link_dir(&dir.join("shortcut"), &dir.join("tex")) {
+            assert_eq!(read_inside(&dir, "shortcut/a.png").as_deref(), Some(&b"inside"[..]), "through a link to a folder inside");
+        }
+        // A link to a single outside file (Unix symbolic links; Windows file links need privileges).
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.join("key.txt"), dir.join("tex/key.png")).unwrap();
+            assert_eq!(read_inside(&dir, "tex/key.png"), None, "through a link to an outside file");
+        }
+        // The mesh's own folder reached through a link is fine: both sides are resolved.
+        if link_dir(&base.join("alias"), &dir) {
+            assert_eq!(read_inside(&base.join("alias"), "tex/a.png").as_deref(), Some(&b"inside"[..]), "folder given through a link");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn below_keeps_paths_inside_the_folder() {
