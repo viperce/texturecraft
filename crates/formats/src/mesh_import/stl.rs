@@ -14,8 +14,8 @@ pub(crate) fn read(bytes: &[u8]) -> Result<RawMesh> {
     let tris = match (count, binary_len) {
         // Exact size wins: many binary files also start with "solid".
         (Some(c), Some(len)) if len == bytes.len() => binary(bytes, c)?,
-        _ if looks_ascii => ascii(bytes)?,
         (Some(c), Some(len)) if len < bytes.len() => binary(bytes, c)?,
+        _ if looks_ascii => ascii(bytes)?,
         _ => return Err(malformed(KIND, "neither a complete binary STL nor an ascii STL")),
     };
     let mut raw = RawMesh::default();
