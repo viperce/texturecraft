@@ -150,7 +150,11 @@ fn unique_entry_name(dir: &str, name: &str, used: &mut HashSet<String>) -> Strin
             Some(i) if i > 0 => base.split_at(i),
             _ => (base.as_str(), ""),
         };
-        entry = format!("{dir}/{stem}_{n}{ext}");
+        // Shorten the stem so the suffixed name still passes `sanitize_resource_name` on load.
+        let suffix = format!("_{n}");
+        let keep = 120usize.saturating_sub(suffix.len() + ext.len());
+        let stem: String = stem.chars().take(keep).collect();
+        entry = format!("{dir}/{stem}{suffix}{ext}");
         n += 1;
     }
     entry

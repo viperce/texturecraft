@@ -229,6 +229,17 @@ fn duplicate_entry_names_are_made_unique_on_save() {
 }
 
 #[test]
+fn colliding_names_at_the_length_limit_still_load() {
+    let mut pf = sample().pf;
+    let long = "x".repeat(130);
+    pf.high_poly = vec![(format!("{long}1.obj"), vec![1]), (format!("{long}2.obj"), vec![2])];
+    pf.resources = [(format!("{long}1"), vec![3]), (format!("{long}2"), vec![4])].into();
+    let back = load_project_bytes(&save_project_bytes(&pf).unwrap()).expect("reload");
+    assert_eq!(back.high_poly.len(), 2);
+    assert_eq!(back.resources.len(), 2);
+}
+
+#[test]
 fn bake_model_options_survive_the_project_archive() {
     use texturecraft_core::{BackfaceMode, CageType, HeightNormalization};
 
