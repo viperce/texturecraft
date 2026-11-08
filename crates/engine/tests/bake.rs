@@ -611,3 +611,42 @@ fn a_failed_multi_set_bake_restores_settings_pixels_and_history() {
     assert_eq!(session.doc.baked, original.baked);
     assert_eq!(session.history_labels(), history);
 }
+
+/// A tilted plane baked over the flat plane primitive exports the analytic tangent-space normal
+/// in both formats. The plane's UVs are u = (x + 1)/2, v = (z + 1)/2 (glTF, v down), so the
+/// tangent is +x, "up the image" is −z, and the normal is +y. A high poly with normal `n` reads
+/// (n·x, −n·z, n·y) in OpenGL (green up the image) and (n·x, n·z, n·y) in DirectX (green down).
+#[test]
+fn a_tilted_high_poly_exports_its_normal_in_opengl_and_directx() {
+    let n = texturecraft_engine::geom::glam::Vec3::new(0.3, 1.0, -0.4).normalize();
+    let mut session = plane_session();
+    let height = |x: f32, z: f32| -(n.x * x + n.z * z) / n.y;
+    // Counter-clockwise seen from above: the face points up, towards the transfer rays' origin
+    let corners = [(-1.5f32, -1.5f32), (-1.5, 1.5), (1.5, 1.5), (1.5, -1.5)];
+    let mut obj = String::from("o Tilt_high\n");
+    for (x, z) in corners {
+        obj += &format!("v {x} {} {z}\n", height(x, z));
+    }
+    obj += "f 1 2 3\nf 1 3 4\n";
+    session.add_high_poly_bytes("tilt_high.obj", obj.into_bytes()).unwrap();
+    // The plane rises at most 0.7 above the 2 × 2 quad: 0.5 of its 2-unit extent either way covers it
+    execute(&mut session, "bake.settings", &json!({ "ts": "all", "maxFrontal": 0.5, "maxRear": 0.5 })).unwrap();
+    execute(&mut session, "bake.run", &json!({ "resolution": 64, "maps": ["normal"], "dilation": 0 })).unwrap();
+
+    let dir = std::env::temp_dir().join(format!("texturecraft-bake-normal-format-{}", std::process::id()));
+    for (format, green) in [("openGl", -n.z), ("directX", n.z)] {
+        let result = execute(
+            &mut session,
+            "file.exportTextures",
+            &json!({ "dir": dir.join(format).display().to_string(), "preset": "glTF PBR Metal Roughness", "normalFormat": format }),
+        )
+        .unwrap();
+        let file = result["files"].as_array().unwrap().iter().filter_map(Value::as_str).find(|f| f.ends_with("_Normal.png")).unwrap().to_string();
+        let image = image::open(&file).unwrap().to_rgb8();
+        let pixel = image.get_pixel(image.width() / 2, image.height() / 2).0;
+        let expected = [n.x, green, n.y].map(|c| ((c * 0.5 + 0.5) * 255.0).round() as i32);
+        // 8-bit export: one step of rounding
+        assert!(pixel.iter().zip(expected).all(|(p, e)| (i32::from(*p) - e).abs() <= 1), "{format}: {pixel:?}, expected {expected:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
