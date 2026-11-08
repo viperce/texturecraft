@@ -514,6 +514,8 @@ fn rnm(base: Vec3, detail: Vec3) -> Vec3 {
     (t * t.dot(u) - u * t.z).normalize_or(Vec3::Z)
 }
 
+/// Builds the shading surface at a ray hit: interpolated geometry, normal and tangent frame, and the
+/// set's channel values (base colour, roughness, metallic, coat and so on) at the hit's UV.
 fn surface(scene: &TraceScene, tri: u32, u: f32, v: f32, o: Vec3, d: Vec3, t: f32) -> Option<Surface> {
     let m = &scene.mesh;
     let i = tri as usize * 3;
@@ -537,10 +539,7 @@ fn surface(scene: &TraceScene, tri: u32, u: f32, v: f32, o: Vec3, d: Vec3, t: f3
 
     let set = scene.tri_set.get(tri as usize).and_then(|s| scene.sets.get(*s));
     // The composite texel at offset (dx, dy) from the hit.
-    let texel = |s: &TraceSet, dx: i32, dy: i32| {
-        let (w, h) = (s.composite.resolution.max(1) as i32, s.composite.height.max(1) as i32);
-        (((uv.x * w as f32).floor() as i32 + dx).rem_euclid(w) as u32, ((uv.y * h as f32).floor() as i32 + dy).rem_euclid(h) as u32)
-    };
+    let texel = |s: &TraceSet, dx: i32, dy: i32| wrapped_texel(uv, (s.composite.resolution, s.composite.height), dx, dy);
     let ch = |c: Channel, dx: i32, dy: i32| -> [f32; 3] {
         let Some(s) = set else { return c.default_value() };
         let (x, y) = texel(s, dx, dy);
@@ -1042,8 +1041,33 @@ fn trace(scene: &TraceScene, mut o: Vec3, mut d: Vec3, settings: &TraceSettings,
     Some(Sample { radiance: if l.is_finite() { l } else { Vec3::ZERO }, albedo, normal, depth })
 }
 
+/// The texel of a `size` image at `uv` (wrapping), offset by `(dx, dy)`. 64-bit so a far-off UV
+/// times a wide image can't overflow the offset (in 32 bits a UV of 1e6 on an image 4096 wide saturated, and the offset then overflowed).
+fn wrapped_texel(uv: Vec2, size: (u32, u32), dx: i32, dy: i32) -> (u32, u32) {
+    let (w, h) = (i64::from(size.0.max(1)), i64::from(size.1.max(1)));
+    let at = |t: f32, n: i64, d: i32| ((t * n as f32).floor() as i64).saturating_add(i64::from(d)).rem_euclid(n) as u32;
+    (at(uv.x, w, dx), at(uv.y, h, dy))
+}
+
 #[cfg(test)]
 mod tests {
+    /// `wrapped_texel` wraps offsets at the edges and stays inside the image for far-off UVs.
+    #[test]
+    fn texel_lookup_survives_far_off_uvs() {
+        use super::wrapped_texel;
+        use texturecraft_geom::glam::Vec2;
+        // Inside the image, and offsets wrap around the edges.
+        assert_eq!(wrapped_texel(Vec2::new(0.25, 0.75), (4, 4), 0, 0), (1, 3));
+        assert_eq!(wrapped_texel(Vec2::new(0.0, 0.99), (4, 4), -1, 1), (3, 0));
+        // 1e6 (the largest UV a mesh may carry) times 8192 texels is past i32::MAX; 1e30 saturates.
+        for uv in [1.0e6, -1.0e6, 1.0e30, f32::MAX] {
+            for (dx, dy) in [(1, 1), (-1, -1), (0, 0)] {
+                let (x, y) = wrapped_texel(Vec2::new(uv, uv), (8192, 8192), dx, dy);
+                assert!(x < 8192 && y < 8192, "{uv}: ({x}, {y})");
+            }
+        }
+    }
+
     use super::*;
     use texturecraft_geom::primitives;
 

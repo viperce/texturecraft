@@ -117,6 +117,10 @@ impl Heights {
         if !(fx.is_finite() && fy.is_finite()) {
             return 0.0;
         }
+        // Past one texel outside, every lookup clamps to the same edge texel, so clamping the
+        // position first changes no result but keeps `x0 + 1` far from overflowing: a huge finite
+        // UV saturates the `as isize` cast, and isize is 32 bits on wasm32.
+        let (fx, fy) = (fx.clamp(-1.0, self.w as f32), fy.clamp(-1.0, self.h as f32));
         let (x0, y0) = (fx.floor(), fy.floor());
         let (tx, ty) = (fx - x0, fy - y0);
         let (x0, y0) = (x0 as isize, y0 as isize);
@@ -142,6 +146,22 @@ mod tests {
             }
         }
         TraceSet { material: 0, composite, height_strength: strength }
+    }
+
+    /// Far-off UVs clamp to the nearest edge texel without overflow; NaN gives 0 and in-range sampling is unchanged.
+    #[test]
+    fn sampling_at_huge_or_far_uvs_clamps_to_the_edge_without_overflow() {
+        let heights = Heights { w: 2, h: 2, data: vec![1.0, 2.0, 3.0, 4.0] };
+        // x0 + 1 used to overflow for these (the cast to isize saturates at isize::MAX).
+        for far in [1.0e30_f32, -1.0e30, f32::MAX, f32::MIN, 1.0e10] {
+            assert!(heights.sample(Vec2::new(far, far)).is_finite());
+        }
+        assert_eq!(heights.sample(Vec2::new(1.0e30, 1.0e30)), 4.0);
+        assert_eq!(heights.sample(Vec2::new(-1.0e30, -1.0e30)), 1.0);
+        assert_eq!(heights.sample(Vec2::new(1.0e30, -1.0e30)), 2.0);
+        assert_eq!(heights.sample(Vec2::new(f32::NAN, 0.5)), 0.0);
+        // In range, bilinear is unchanged: the centre of the 2 x 2 is the mean.
+        assert!((heights.sample(Vec2::new(0.5, 0.5)) - 2.5).abs() < 1e-6);
     }
 
     #[test]

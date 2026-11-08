@@ -85,9 +85,17 @@ impl ImageRes {
         }
         let fx = u * self.width as f32 - 0.5;
         let fy = v * self.height as f32 - 0.5;
+        if !fx.is_finite() || !fy.is_finite() {
+            return [0.0; 4];
+        }
         let (x0, y0) = (fx.floor() as i64, fy.floor() as i64);
         let (tx, ty) = (fx - fx.floor(), fy - fy.floor());
-        let (a, b, c, d) = (self.texel(x0, y0), self.texel(x0 + 1, y0), self.texel(x0, y0 + 1), self.texel(x0 + 1, y0 + 1));
+        let (a, b, c, d) = (
+            self.texel(x0, y0),
+            self.texel(x0.saturating_add(1), y0),
+            self.texel(x0, y0.saturating_add(1)),
+            self.texel(x0.saturating_add(1), y0.saturating_add(1)),
+        );
         let mut out = [0.0; 4];
         for k in 0..4 {
             let top = a[k] + (b[k] - a[k]) * tx;
@@ -95,5 +103,25 @@ impl ImageRes {
             out[k] = top + (bot - top) * ty;
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 2 x 2 black and white checker image for the sampling test.
+    fn checker() -> ImageRes {
+        ImageRes { width: 2, height: 2, rgba: vec![[0.0; 4], [1.0; 4], [1.0; 4], [0.0; 4]], srgb: false }
+    }
+
+    /// Sampling at huge finite coordinates stays finite and within 0..=1 instead of overflowing.
+    #[test]
+    fn sampling_at_huge_finite_coordinates_does_not_overflow() {
+        let img = checker();
+        for (u, v) in [(1.0e30, 0.5), (0.5, -1.0e30), (f32::MAX, f32::MAX), (1.0e6, -1.0e6)] {
+            let s = img.sample(u, v);
+            assert!(s.iter().all(|c| c.is_finite() && (0.0..=1.0).contains(c)), "({u}, {v}) -> {s:?}");
+        }
     }
 }

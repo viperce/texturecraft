@@ -47,6 +47,9 @@ pub struct Mesh {
 
 /// Hard cap on mesh size accepted from files (triangles).
 pub const MAX_TRIANGLES: usize = 20_000_000;
+/// Largest UV coordinate a mesh may carry (UDIM tiles stop at 10 columns; this is far beyond any
+/// real layout). Texel lookups turn UVs into integers, which a UV like 1e30 would overflow.
+pub const MAX_UV: f32 = 1.0e6;
 
 impl Mesh {
     pub fn triangle_count(&self) -> usize {
@@ -144,6 +147,12 @@ impl Mesh {
         }
         if self.positions.iter().any(|p| !p.is_finite()) {
             return Err(GeomError::Invalid("mesh has non-finite positions".into()));
+        }
+        if self.normals.iter().any(|n| !n.is_finite()) {
+            return Err(GeomError::Invalid("mesh has non-finite normals".into()));
+        }
+        if self.uvs.iter().any(|uv| !uv.is_finite() || uv.x.abs() > MAX_UV || uv.y.abs() > MAX_UV) {
+            return Err(GeomError::Invalid(format!("mesh has non-finite UVs or UVs beyond ±{MAX_UV}")));
         }
         for s in &self.submeshes {
             if s.start as usize + s.count as usize > self.indices.len() || s.material >= self.materials.len().max(1) {
@@ -441,6 +450,27 @@ mod tests {
         let mut m = quad();
         m.uvs.pop();
         assert!(m.validate().is_err());
+    }
+
+    /// Validation rejects non-finite normals and non-finite or beyond-limit UVs, but accepts UDIM-style UVs.
+    #[test]
+    fn validate_refuses_non_finite_normals_and_absurd_uvs() {
+        assert!(quad().validate().is_ok());
+        for bad in [f32::NAN, f32::INFINITY, -f32::INFINITY, 1.0e30, -2.0e6] {
+            let mut m = quad();
+            m.uvs[1].x = bad;
+            assert!(m.validate().is_err(), "uv {bad}");
+            let mut m = quad();
+            m.uvs[2].y = bad;
+            assert!(m.validate().is_err(), "uv {bad}");
+        }
+        let mut m = quad();
+        m.normals[0].z = f32::NAN;
+        assert!(m.validate().is_err());
+        // Large but real UDIM-style layouts stay valid.
+        let mut m = quad();
+        m.uvs[0] = Vec2::new(1009.5, 0.5);
+        assert!(m.validate().is_ok());
     }
 
     #[test]
