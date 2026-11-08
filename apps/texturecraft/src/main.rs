@@ -11,6 +11,7 @@ mod window_frame;
 
 use texturecraft_engine::Session;
 use texturecraft_ui_egui::titlebar::TitleBar;
+use texturecraft_ui_egui::ui_state_store;
 use texturecraft_ui_egui::{TextureCraftApp, UiState};
 
 /// The app name eframe keeps the settings under (`eframe::storage_dir`).
@@ -115,13 +116,16 @@ fn set_taskbar_icon(w: &winit::window::Window) {
     }
 }
 
-/// Settings › Interface › System title bar, read from the saved settings before the window opens
-/// (eframe hands the app its storage only afterwards). Missing or unreadable: off.
-fn saved_system_title_bar(persistence_path: Option<&std::path::Path>) -> bool {
-    let file = persistence_path.map(std::path::Path::to_path_buf).or_else(|| eframe::storage_dir(APP_NAME).map(|d| d.join("app.ron")));
-    let saved = file.and_then(|f| std::fs::read_to_string(f).ok());
-    let kv = saved.and_then(|s| ron::from_str::<std::collections::HashMap<String, String>>(&s).ok());
-    kv.and_then(|kv| ron::from_str::<UiState>(kv.get("ui")?).ok()).is_some_and(|ui| ui.prefs.system_title_bar)
+/// Settings › Interface › System title bar, read before the window opens from `ui.json`, else as earlier builds saved it; missing or unreadable: off
+fn saved_system_title_bar(ui_file: Option<&std::path::Path>, persistence_path: Option<&std::path::Path>) -> bool {
+    if let Some(ui) = ui_file.and_then(ui_state_store::read) {
+        return ui.prefs.system_title_bar;
+    }
+
+    let file = persistence_path.map(std::path::Path::to_path_buf).or_else(|| eframe::storage_dir(APP_NAME).map(|folder| folder.join("app.ron")));
+    let saved = file.and_then(|file| std::fs::read_to_string(file).ok());
+    let entries = saved.and_then(|text| ron::from_str::<std::collections::HashMap<String, String>>(&text).ok());
+    entries.and_then(|entries| ron::from_str::<UiState>(entries.get("ui")?).ok()).is_some_and(|ui| ui.prefs.system_title_bar)
 }
 
 /// The app with the window chrome that needs the native window: the Windows borderless guard, and
@@ -170,20 +174,24 @@ fn main() {
             std::process::exit(2);
         }
     };
-    // Errors before the window opens speak the system's language; the app then applies the saved one.
+    // Errors before the window opens speak the system's language; the app then applies the saved one
     texturecraft_ui_egui::i18n::set_language(texturecraft_ui_egui::i18n::os_language());
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // A message box needs the main thread on macOS; other threads' panics are only logged.
+        // A message box needs the main thread on macOS; other threads' panics are only logged
         fatal(&format!("internal error: {info}"), std::thread::current().name() == Some("main"));
         prev(info);
     }));
     let session = initial_session(&args);
-    // Scripted runs (agents, films, tests) set TEXTURECRAFT_NO_PREFS so they neither read nor
-    // overwrite the user's saved UI layout and settings: state goes to a throwaway folder.
+    // Scripted runs (agents, films, tests) set TEXTURECRAFT_NO_PREFS to keep the user's saved settings untouched: state goes to throwaway files
     let persistence_path =
         std::env::var_os("TEXTURECRAFT_NO_PREFS").map(|_| std::env::temp_dir().join(format!("texturecraft-noprefs-{}.ron", std::process::id())));
-    let title_bar = TitleBar::decide(saved_system_title_bar(persistence_path.as_deref()));
+    let ui_file =
+        persistence_path.as_ref().map(|path| path.with_extension("json")).or_else(|| eframe::storage_dir(APP_NAME).map(|folder| folder.join("ui.json")));
+    if let Some(file) = &ui_file {
+        let _ = ui_state_store::FILE.set(file.clone());
+    }
+    let title_bar = TitleBar::decide(saved_system_title_bar(ui_file.as_deref(), persistence_path.as_deref()));
     let mut viewport = egui::ViewportBuilder::default().with_title(APP_NAME).with_inner_size([1600.0, 960.0]).with_min_inner_size([960.0, 600.0]);
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
@@ -195,7 +203,7 @@ fn main() {
         std::process::exit(2);
     }
     let control = args.control;
-    // The start window offers new, open and recent projects, unless a file was given or a script drives the app.
+    // The start window offers new, open and recent projects, unless a file was given or a script drives the app
     let start = args.file.is_none() && control.is_none();
     let r = eframe::run_native(
         APP_NAME,
@@ -296,19 +304,27 @@ mod tests {
     }
 
     #[test]
-    fn the_system_title_bar_setting_is_read_from_eframes_settings_file() {
-        let path = std::env::temp_dir().join(format!("texturecraft-titlebar-test-{}.ron", std::process::id()));
+    fn the_system_title_bar_setting_is_read_from_ui_json_else_as_earlier_builds_saved_it() {
+        let ron_path = std::env::temp_dir().join(format!("texturecraft-titlebar-test-{}.ron", std::process::id()));
+        let json_path = ron_path.with_extension("json");
         for on in [false, true] {
             let mut ui = UiState::default();
             ui.prefs.system_title_bar = on;
-            // Written as eframe writes it: a pretty RON map of RON strings.
+            // Written as eframe writes it: a pretty RON map of RON strings
             let kv = std::collections::HashMap::from([("ui".to_string(), ron::to_string(&ui).unwrap())]);
-            std::fs::write(&path, ron::Options::default().to_string_pretty(&kv, Default::default()).unwrap()).unwrap();
-            assert_eq!(saved_system_title_bar(Some(&path)), on);
+            std::fs::write(&ron_path, ron::Options::default().to_string_pretty(&kv, Default::default()).unwrap()).unwrap();
+            assert_eq!(saved_system_title_bar(None, Some(&ron_path)), on);
+
+            ui.prefs.system_title_bar = !on;
+            std::fs::write(&json_path, serde_json::to_vec(&ui).unwrap()).unwrap();
+            assert_eq!(saved_system_title_bar(Some(&json_path), Some(&ron_path)), !on, "ui.json comes first");
         }
-        std::fs::write(&path, "not ron").unwrap();
-        assert!(!saved_system_title_bar(Some(&path)));
-        std::fs::remove_file(&path).unwrap();
-        assert!(!saved_system_title_bar(Some(&path)));
+
+        std::fs::write(&json_path, "not json").unwrap();
+        std::fs::write(&ron_path, "not ron").unwrap();
+        assert!(!saved_system_title_bar(Some(&json_path), Some(&ron_path)));
+        std::fs::remove_file(&json_path).unwrap();
+        std::fs::remove_file(&ron_path).unwrap();
+        assert!(!saved_system_title_bar(Some(&json_path), Some(&ron_path)));
     }
 }

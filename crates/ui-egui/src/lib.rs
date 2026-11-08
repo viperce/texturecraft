@@ -33,6 +33,7 @@ pub mod theme;
 pub mod thumbs;
 pub mod titlebar;
 pub mod toolbar;
+pub mod ui_state_store;
 pub mod viewport;
 pub mod web_files;
 pub mod widgets;
@@ -86,6 +87,8 @@ pub struct TextureCraftApp {
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
     pub ui: UiState,
+    /// Where `ui` is saved between runs
+    ui_store: ui_state_store::UiStateStore,
     pub gpu: Option<gpu::GpuLink>,
     pub control: Option<std::sync::mpsc::Receiver<ControlRequest>>,
     pub toasts: Vec<Toast>,
@@ -135,12 +138,13 @@ pub struct TextureCraftApp {
 impl TextureCraftApp {
     pub fn new(cc: &eframe::CreationContext<'_>, session: Session) -> TextureCraftApp {
         theme::install(&cc.egui_ctx);
-        // Bakes cast their rays on a GPU device of their own (created on the first bake).
+        // Bakes cast their rays on a GPU device of their own (created on the first bake)
         #[cfg(not(target_arch = "wasm32"))]
         texturecraft_engine::bake::install_gpu_tracer(Arc::new(texturecraft_render::gpu_bake::GpuBaker::new()));
-        let gpu = cc.wgpu_render_state.as_ref().map(|rs| gpu::init(rs, &cc.egui_ctx));
-        // The first run speaks the OS (or browser) language.
-        let ui = cc.storage.and_then(|s| eframe::get_value::<UiState>(s, "ui")).unwrap_or_else(|| {
+        let gpu = cc.wgpu_render_state.as_ref().map(|render_state| gpu::init(render_state, &cc.egui_ctx));
+        // The first run speaks the OS (or browser) language
+        let mut ui_store = ui_state_store::UiStateStore::new(ui_state_store::FILE.get().cloned());
+        let ui = ui_store.load(cc.storage).unwrap_or_else(|| {
             let mut ui = UiState::default();
             ui.prefs.language = i18n::os_language().into();
             ui
@@ -150,6 +154,7 @@ impl TextureCraftApp {
             camera_glide: None,
             session,
             ui,
+            ui_store,
             gpu,
             control: None,
             toasts: Vec::new(),
@@ -183,14 +188,14 @@ impl TextureCraftApp {
         export_templates::load_library(&mut app, cc.storage);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // The first window of the process fixes it; a new folder applies on restart.
+            // The first window of the process fixes it; a new folder applies on restart
             let _ = DATA_FOLDER.set(data_folder(&app.ui.prefs.data_folder));
-            // An export folder still at the default follows the data folder.
+            // An export folder still at the default follows the data folder
             if app.ui.export.dir == data_folder("").join("export").display().to_string() {
                 app.ui.export.dir = user_dir("export").display().to_string();
             }
             let skipped = app.session.load_templates(user_dir("templates"));
-            app.session.log.extend(skipped.into_iter().map(|w| format!("Project template skipped: {w}")));
+            app.session.log.extend(skipped.into_iter().map(|warning| format!("Project template skipped: {warning}")));
         }
         app
     }
@@ -481,7 +486,7 @@ impl eframe::App for TextureCraftApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, "ui", &self.ui);
+        self.ui_store.save(&self.ui, storage);
         export_templates::save_library(self, storage);
     }
 
