@@ -239,6 +239,24 @@ fn templates_are_sanitized_and_collisions_suffixed() {
 }
 
 #[test]
+fn template_values_are_not_expanded_again() {
+    let mut fx = Fx::new(&default_channels());
+    fx.project.name = "a$mesh$textureSet$channel$colorSpace".into();
+    let preset = ExportPreset {
+        name: "t".into(),
+        maps: vec![MapSpec {
+            file: "$project".into(),
+            format: FileFormat::Png,
+            bit_depth: 8,
+            channels: vec![(Dest::L, SourceRef::Channel { channel: Channel::Roughness, component: 0 })],
+        }],
+    };
+    let planned = list_outputs(&fx.project, 0, "sphere", &ExportOptions::new(preset)).unwrap();
+    let names: Vec<&str> = planned.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["a_mesh_textureSet_channel_colorSpace.png"]);
+}
+
+#[test]
 fn padding_modes() {
     let mut fx = Fx::new(&default_channels());
     fx.coverage = (0..RES * RES).map(|i| i % RES < 32).collect();

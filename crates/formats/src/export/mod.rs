@@ -466,6 +466,28 @@ pub fn sanitize_file_stem(s: &str) -> String {
     out
 }
 
+/// Replaces each variable in `template` in one pass, so a value that contains `$` text is kept as is.
+fn expand_template(template: &str, values: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(i) = rest.find('$') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        match values.iter().find(|(t, _)| rest.starts_with(t)) {
+            Some((t, v)) => {
+                out.push_str(v);
+                rest = &rest[t.len()..];
+            }
+            None => {
+                out.push('$');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The files `opts` produces for texture set `ts`, without rendering (for the export dialog).
 /// Template variables: [`FILE_TOKENS`].
 pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOptions) -> Result<Vec<PlannedFile>> {
@@ -496,24 +518,20 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
         // One file per UV tile: names without `$udim` get it appended.
         let template = if tiles.iter().any(Option::is_some) && !map.file.contains("$udim") { format!("{}.$udim", map.file) } else { map.file.clone() };
         for &tile in &tiles {
-            let stem = template
-                .replace("$udim", &tile.unwrap_or(1001).to_string())
-                .replace("$project", &project.name)
-                .replace("$mesh", mesh_name)
-                .replace("$textureSet", &set.name)
-                .replace("$channel", channel_label(map))
-                .replace("$colorSpace", color_space);
+            let expand = |udim: &str| {
+                let values = [
+                    ("$udim", udim),
+                    ("$project", project.name.as_str()),
+                    ("$mesh", mesh_name),
+                    ("$textureSet", set.name.as_str()),
+                    ("$channel", channel_label(map)),
+                    ("$colorSpace", color_space),
+                ];
+                expand_template(&template, &values)
+            };
+            let stem = expand(&tile.unwrap_or(1001).to_string());
             // The same name with the tile number as a placeholder, to write it as `<UDIM>` after.
-            let token_stem = tile.map(|_| {
-                let t = template
-                    .replace("$udim", "UDIMTOKEN")
-                    .replace("$project", &project.name)
-                    .replace("$mesh", mesh_name)
-                    .replace("$textureSet", &set.name)
-                    .replace("$channel", channel_label(map))
-                    .replace("$colorSpace", color_space);
-                sanitize_file_stem(&t)
-            });
+            let token_stem = tile.map(|_| sanitize_file_stem(&expand("UDIMTOKEN")));
             let stem = sanitize_file_stem(&stem);
             let ext = format.extension();
             let mut name = format!("{stem}.{ext}");
