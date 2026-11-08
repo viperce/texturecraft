@@ -38,8 +38,12 @@ const MAX_JSON: u64 = 256 << 20;
 const MAX_THUMBNAIL: u64 = 64 << 20;
 const MAX_RESOURCE: u64 = 512 << 20;
 const MAX_ENTRIES: usize = 100_000;
-/// Total decompressed bytes accepted from one project file (zip-bomb guard).
+/// Total decompressed bytes accepted from one project file (zip-bomb guard). The web build
+/// has a 4 GiB address space and already holds the whole file in memory.
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_TOTAL: u64 = 8 << 30;
+#[cfg(target_arch = "wasm32")]
+const MAX_TOTAL: u64 = 2 << 30;
 /// Largest image (texels) of a texture set or baked map: UV-tiled sets hold several tiles.
 const MAX_TEXELS: u64 = 1 << 28;
 
@@ -261,6 +265,24 @@ fn read_all(r: &mut impl Read, cap: u64, budget: &mut Budget, what: &str) -> Res
     Ok(out)
 }
 
+/// Read `count` little-endian f32s. Memory grows with the bytes that actually arrive (a header
+/// can't make us allocate what the entry doesn't hold), and a failed allocation is an error.
+fn read_f32s(r: &mut impl Read, count: usize, what: &str) -> Result<Vec<f32>> {
+    const CHUNK: usize = 1 << 16; // floats per read: 256 KiB
+    let mut out: Vec<f32> = Vec::new();
+    let mut buf = vec![0u8; CHUNK.min(count) * 4];
+    let mut left = count;
+    while left > 0 {
+        let n = CHUNK.min(left);
+        let bytes = buf.get_mut(..n * 4).ok_or_else(|| malformed(KIND, format!("{what}: internal buffer")))?;
+        read_exact(r, bytes, what)?;
+        out.try_reserve(n).map_err(|_| FormatError::TooLarge(format!("{what}: not enough memory for {count} values")))?;
+        out.extend(bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])));
+        left -= n;
+    }
+    Ok(out)
+}
+
 fn read_exact(r: &mut impl Read, buf: &mut [u8], what: &str) -> Result<()> {
     r.read_exact(buf).map_err(|e| malformed(KIND, format!("{what}: {e}")))
 }
@@ -320,17 +342,20 @@ fn read_tiles(r: &mut impl Read, size: (u32, u32), comps: usize, budget: &mut Bu
 }
 
 /// A baked map: (width, height, data).
-fn read_baked(r: &mut impl Read, comps: usize, budget: &mut Budget, what: &str) -> Result<(u32, u32, Vec<f32>)> {
+fn read_baked(r: &mut impl Read, declared: u64, comps: usize, budget: &mut Budget, what: &str) -> Result<(u32, u32, Vec<f32>)> {
     let (w, h, c, _) = read_header(r, what)?;
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_TEXELS || c != comps {
         return Err(malformed(KIND, format!("{what}: bad size {w}×{h}×{c}")));
     }
     let len = (w as usize) * (h as usize) * comps;
+    // Header (24 bytes) + data: an entry that says otherwise is not a baked map.
+    if declared != 24 + len as u64 * 4 {
+        return Err(malformed(KIND, format!("{what}: {declared} bytes for a {w}×{h}×{c} map")));
+    }
     budget.take(len as u64 * 4)?;
-    let mut bytes = vec![0u8; len * 4];
-    read_exact(r, &mut bytes, what)?;
+    let data = read_f32s(r, len, what)?;
     expect_end(r, what)?;
-    Ok((w, h, bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()))
+    Ok((w, h, data))
 }
 
 /// Texture set holding a paint layer, a content effect or a mask effect id.
@@ -411,7 +436,8 @@ fn load<R: Read + Seek>(reader: R) -> Result<ProjectFile> {
                 "skew" => BakePaintTarget::Skew,
                 _ => return Err(malformed(KIND, format!("unknown bake paint target in {name}"))),
             };
-            let (width, height, values) = read_baked(&mut f, 1, &mut budget, &name)?;
+            let declared = f.size();
+            let (width, height, values) = read_baked(&mut f, declared, 1, &mut budget, &name)?;
             pf.bake_paint.insert((texture_set, target), BakePaintData { width, height, values });
         } else if let Some(ext) = name.strip_prefix("mesh.").filter(|e| !e.contains('/')) {
             let bytes = read_all(&mut f, crate::mesh_import::MAX_MESH_FILE_BYTES, &mut budget, &name)?;
@@ -443,7 +469,8 @@ fn load<R: Read + Seek>(reader: R) -> Result<ProjectFile> {
                 continue;
             }
 
-            let (res, height, data) = read_baked(&mut f, m.components(), &mut budget, &name)?;
+            let declared = f.size();
+            let (res, height, data) = read_baked(&mut f, declared, m.components(), &mut budget, &name)?;
             let maps = pf.baked.entry(ts).or_default();
             if maps.maps.is_empty() {
                 maps.resolution = res;
