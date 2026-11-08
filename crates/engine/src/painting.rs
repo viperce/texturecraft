@@ -332,9 +332,7 @@ impl Session {
         let Some(cache) = self.caches.get_mut(active.ts) else { return };
 
         let settings = &active.stroke.settings;
-        let pressure = pressure.clamp(0.0, 1.0);
-        let size_scale = if pressure < 1.0 { settings.min_size + (1.0 - settings.min_size) * pressure } else { 1.0 };
-        let radius = settings.size * 2.0 * size_scale;
+        let radius = settings.uv_stamp_radius(pressure);
         let step = (settings.spacing * 2.0 * radius).max(MIN_UV_STAMP_STEP);
 
         // Follow path: turn the stamp with the stroke direction (y up on screen, v grows down)

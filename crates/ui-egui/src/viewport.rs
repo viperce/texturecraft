@@ -346,14 +346,16 @@ const VIEW_HEADER_TOP_GAP: f32 = 8.0;
 /// Width of each of the two pickers
 const VIEW_PICKER_WIDTH: f32 = 130.0;
 
+/// Where `view_header` draws its pickers in a view of `rect`; `None` when the view is too narrow.
+fn view_header_rect(rect: Rect) -> Option<Rect> {
+    (rect.width() >= VIEW_HEADER_WIDTH).then(|| {
+        Rect::from_min_size(rect.min + vec2((rect.width() - VIEW_HEADER_WIDTH) * 0.5, VIEW_HEADER_TOP_GAP), vec2(VIEW_HEADER_WIDTH, VIEW_HEADER_HEIGHT))
+    })
+}
+
 /// The camera and view pickers at the top of a view, left out when the view is too narrow to hold them
 fn view_header(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, id: &str) {
-    if rect.width() < VIEW_HEADER_WIDTH {
-        return;
-    }
-
-    let header_min = rect.min + vec2((rect.width() - VIEW_HEADER_WIDTH) * 0.5, VIEW_HEADER_TOP_GAP);
-    let header = Rect::from_min_size(header_min, vec2(VIEW_HEADER_WIDTH, VIEW_HEADER_HEIGHT));
+    let Some(header) = view_header_rect(rect) else { return };
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(header).layout(egui::Layout::left_to_right(egui::Align::Center)));
 
     let current = texturecraft_engine::camera_cmds::current(&app.session);
@@ -1166,7 +1168,9 @@ fn brush_readout(app: &TextureCraftApp, ui: &Ui, resp: &egui::Response, adjustin
     let Some(right) = brush_drag_button(resp).filter(|_| adjusting) else { return };
     let Some(at) = ui.input(|i| i.pointer.press_origin()) else { return };
     // The pointer would cover the values; the brush cursor stays where the drag began.
-    ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+    if ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| resp.rect.contains(p)) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+    }
     let b = &app.session.tool.brush;
     let text = if right {
         format!("{} {:.1}   {} {:.0}", tr("Size"), b.size / 0.25 * 100.0, tr("Hardness"), b.hardness * 100.0)
@@ -1407,11 +1411,50 @@ fn view_2d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
         }
     }
 
+    // Brush cursor: the stamp's size and hardness at the pointer, as in the 3D view.
+    let cursor_mode = app.ui.mode == crate::state::Mode::Painting && !alt && !v_held;
+    let pointer_in_view = ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p));
+    if cursor_mode
+        && !path_tool
+        && brush_tool(app.session.tool.tool)
+        && !response.dragged_by(PointerButton::Middle)
+        // During a drag egui keeps reporting a hover position after the pointer left the view:
+        // the system pointer is hidden only while the pointer is really over it. A Ctrl+drag that
+        // changes the brush keeps its outline at the press origin wherever the pointer goes.
+        && (adjusting || pointer_in_view)
+        // While a Ctrl+drag changes the brush, its cursor stays where the drag began.
+        && let Some(hp) = if adjusting { ui.input(|i| i.pointer.press_origin()) } else { response.hover_pos().or_else(|| response.interact_pointer_pos()) }
+        // The view header's pickers keep the normal pointer.
+        && !view_header_rect(rect).is_some_and(|header| header.expand(2.0).contains(hp))
+    {
+        // The stamp's radius as `continue_stroke_uv` paints it, including a light pen's smaller footprint.
+        let r = (to_screen(app.session.tool.brush.uv_stamp_radius(pen_pressure(ui)), 0.0).x - to_screen(0.0, 0.0).x).abs().max(1.5);
+        if pointer_in_view {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+        }
+        brush_cursor_2d(&painter, hp, r, app.session.tool.brush.hardness);
+    }
     brush_readout(app, ui, &response, adjusting);
     view_header(app, ui, rect, "v2d");
     axis_gizmo(ui, rect, app, true);
     let name = app.session.doc.project.texture_sets.get(ts).map(|texture_set| texture_set.name.clone()).unwrap_or_default();
     ui.painter().text(rect.right_bottom() + vec2(-10.0, -10.0), egui::Align2::RIGHT_BOTTOM, name, egui::FontId::proportional(11.0), tokens.viewport_text);
+}
+
+/// The brush outline (and its hardness ring) as screen circles around `c`, radius `r` in points.
+fn brush_cursor_2d(p: &egui::Painter, c: egui::Pos2, r: f32, hardness: f32) {
+    p.circle_stroke(c, r, Stroke::new(2.5, Color32::from_black_alpha(140)));
+    p.circle_stroke(c, r, Stroke::new(1.2, Color32::from_white_alpha(230)));
+    if hardness > 0.05 {
+        let inner: Vec<egui::Pos2> = (0..=48)
+            .map(|k| {
+                let a = k as f32 / 48.0 * std::f32::consts::TAU;
+                c + vec2(a.cos(), a.sin()) * r * hardness
+            })
+            .collect();
+        p.add(egui::Shape::dashed_line(&inner, Stroke::new(1.0, Color32::from_white_alpha(120)), 3.0, 3.0));
+    }
+    p.circle_filled(c, 1.5, Color32::WHITE);
 }
 
 /// Paint in the 2D view: a press starts a stroke, a drag continues it, Shift+click draws a line from the last stroke.

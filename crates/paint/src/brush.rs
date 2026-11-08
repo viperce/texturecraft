@@ -291,6 +291,13 @@ impl Default for BrushSettings {
 }
 
 impl BrushSettings {
+    /// Radius of a 2D (UV) stamp as a fraction of the UV square, for pen `pressure` 0..1: twice the
+    /// brush size, shrunk towards `min_size` by a light pen. Painting and the 2D cursor share it.
+    pub fn uv_stamp_radius(&self, pressure: f32) -> f32 {
+        let p = pressure.clamp(0.0, 1.0);
+        self.size * 2.0 * if p < 1.0 { self.min_size + (1.0 - self.min_size) * p } else { 1.0 }
+    }
+
     /// Clamp every value into its valid range (input from UI, CLI or agents).
     pub fn sanitized(&self) -> BrushSettings {
         let f = |v: f32, lo: f32, hi: f32, d: f32| if v.is_finite() { v.clamp(lo, hi) } else { d };
@@ -323,6 +330,15 @@ impl BrushSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn uv_stamp_radius_follows_pen_pressure() {
+        let b = BrushSettings { size: 0.1, min_size: 0.5, ..BrushSettings::default() };
+        assert!((b.uv_stamp_radius(1.0) - 0.2).abs() < 1e-6);
+        assert!((b.uv_stamp_radius(0.5) - 0.15).abs() < 1e-6);
+        assert!((b.uv_stamp_radius(0.0) - 0.1).abs() < 1e-6);
+        assert!((b.uv_stamp_radius(7.0) - 0.2).abs() < 1e-6, "pressure clamps to 1");
+    }
+
     use super::*;
 
     #[test]
