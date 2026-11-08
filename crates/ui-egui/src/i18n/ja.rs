@@ -92,6 +92,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Axis", "軸"),
     ("Back to painting", "ペイントに戻る"),
     ("Backface culling", "背面カリング"),
+    ("Bake an ID map (F8) to pick colors from the mesh.", "メッシュから色を拾うには ID マップをベイクしてください (F8)。"),
     ("Bake Mesh Maps", "メッシュマップのベイク"),
     ("Bake mesh maps", "メッシュマップをベイク"),
     (
@@ -127,6 +128,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Built-in: {mesh}", "組み込み: {mesh}"),
     ("Cage: {name}", "ケージ: {name}"),
     ("Camera", "カメラ"),
+    ("Colors", "カラー"),
     ("Go to camera 1", "カメラ 1 に移動"),
     ("Go to camera 2", "カメラ 2 に移動"),
     ("Go to camera 3", "カメラ 3 に移動"),
@@ -570,6 +572,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Overlay", "オーバーレイ"),
     ("Overlay opacity", "オーバーレイの不透明度"),
     ("PBR - Metallic Roughness (TextureCraft)", "PBR - メタリック/ラフネス (TextureCraft)"),
+    ("Pick color", "色を拾う"),
     ("PNG image", "PNG画像"),
     ("Padding", "パディング"),
     ("Paint", "ペイント"),

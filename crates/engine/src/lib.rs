@@ -11,6 +11,7 @@
 pub mod bake;
 pub mod brush_preset_cmds;
 pub mod camera_cmds;
+pub mod color_selection_cmds;
 pub mod commands;
 pub mod decal_cmds;
 pub mod effect_clipboard;

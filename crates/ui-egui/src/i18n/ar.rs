@@ -86,6 +86,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Axis", "المحور"),
     ("Back to painting", "العودة إلى الرسم"),
     ("Backface culling", "استبعاد الوجوه الخلفية"),
+    ("Bake an ID map (F8) to pick colors from the mesh.", "اخبز خريطة المعرّفات ID (F8) لالتقاط الألوان من الشبكة."),
     ("Bake Mesh Maps", "خبز خرائط المجسم"),
     ("Bake mesh maps", "خبز خرائط المجسم"),
     (
@@ -121,6 +122,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Built-in: {mesh}", "مدمج: {mesh}"),
     ("Cage: {name}", "القفص (Cage): {name}"),
     ("Camera", "الكاميرا"),
+    ("Colors", "الألوان"),
     ("Go to camera 1", "الانتقال إلى الكاميرا 1"),
     ("Go to camera 2", "الانتقال إلى الكاميرا 2"),
     ("Go to camera 3", "الانتقال إلى الكاميرا 3"),
@@ -552,6 +554,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Overlay", "تراكب (Overlay)"),
     ("Overlay opacity", "عتامة التراكب"),
     ("PBR - Metallic Roughness (TextureCraft)", "PBR - خشونة ومعدنية (TextureCraft)"),
+    ("Pick color", "التقاط لون"),
     ("PNG image", "صورة PNG"),
     ("Padding", "الحشو (Padding)"),
     ("Paint", "رسم"),

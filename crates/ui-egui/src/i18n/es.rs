@@ -86,6 +86,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Axis", "Eje"),
     ("Back to painting", "Volver a pintar"),
     ("Backface culling", "Descarte de caras traseras"),
+    ("Bake an ID map (F8) to pick colors from the mesh.", "Hornea un mapa de ID (F8) para tomar colores de la malla."),
     ("Bake Mesh Maps", "Hornear mapas de malla"),
     ("Bake mesh maps", "Hornear mapas de malla"),
     (
@@ -121,6 +122,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Built-in: {mesh}", "Integrada: {mesh}"),
     ("Cage: {name}", "Jaula: {name}"),
     ("Camera", "Cámara"),
+    ("Colors", "Colores"),
     ("Go to camera 1", "Ir a la cámara 1"),
     ("Go to camera 2", "Ir a la cámara 2"),
     ("Go to camera 3", "Ir a la cámara 3"),
@@ -576,6 +578,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Overlay", "Superponer"),
     ("Overlay opacity", "Opacidad de superposición"),
     ("PBR - Metallic Roughness (TextureCraft)", "PBR - Metálico Rugosidad (TextureCraft)"),
+    ("Pick color", "Tomar color"),
     ("PNG image", "Imagen PNG"),
     ("Padding", "Margen"),
     ("Paint", "Pintar"),

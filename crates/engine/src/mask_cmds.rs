@@ -94,7 +94,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit effect",
             [],
             None,
-            "{effect, visible?, blend?, opacity?, name?, level?, softness?, noise?, noiseScale?, invert?, value?, anchor?, anchorChannel?, inLow?, inHigh?, gamma?, outLow?, outHigh?, tolerance?, filter parameters (see effect.add.filter)}",
+            "{effect, visible?, blend?, opacity?, name?, level?, softness?, noise?, noiseScale?, invert?, value?, anchor?, anchorChannel?, inLow?, inHigh?, gamma?, outLow?, outHigh?, tolerance?, colors?: [[r,g,b], ...] (a color selection's ID colors), filter parameters (see effect.add.filter)}",
             has_layer,
             set
         ),
@@ -413,55 +413,60 @@ fn histogram(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(if content { json!({"target": "content", "channel": channel.id(), "bins": counts}) } else { json!({"target": "mask", "bins": counts}) })
 }
 
+/// Edits effect `effect`: visibility, blending, name or its kind's parameters
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
-    let eid = effect_id(s, p, "effect.set")?;
-    let blend = blend_param("effect.set", p, "blend")?;
-    // A fill reading an anchor: `anchor` picks the anchor point, `anchorChannel` alone
-    // re-targets the current one.
-    let anchor = match s.doc.project.effect(eid) {
+    const CMD: &str = "effect.set";
+    let effect = effect_id(s, p, CMD)?;
+    let blend = blend_param(CMD, p, "blend")?;
+
+    // `anchor` picks a fill's anchor point, `anchorChannel` alone re-targets the current one
+    let anchor = match s.doc.project.effect(effect) {
         Some((owner, Effect { kind: EffectKind::Fill { source, .. }, .. })) => {
             let (current, channel) = match source {
                 Source::Anchor { anchor, channel } => (Some(*anchor), *channel),
                 _ => (None, Channel::Height),
             };
-            let channel_param = channel_param("effect.set", p, "anchorChannel")?;
+            let channel_param = channel_param(CMD, p, "anchorChannel")?;
             match u64p(p, "anchor").map(LayerId).or(current.filter(|_| channel_param.is_some())) {
-                Some(a) => Some(anchor_source(s, "effect.set", owner, a, channel_param.unwrap_or(channel))?),
+                Some(anchor) => Some(anchor_source(s, CMD, owner, anchor, channel_param.unwrap_or(channel))?),
                 None => None,
             }
         }
         _ => None,
     };
+
     s.edit("Edit effect", |s| {
-        let e = s.doc.project.effect_mut(eid).ok_or_else(|| bad("effect.set", format!("no effect {}", eid.0)))?;
-        if let Some(v) = boolp(p, "visible") {
-            e.visible = v;
+        let edited = s.doc.project.effect_mut(effect).ok_or_else(|| bad(CMD, format!("no effect {}", effect.0)))?;
+        if let Some(visible) = boolp(p, "visible") {
+            edited.visible = visible;
         }
-        if let Some(b) = blend {
-            e.blend = b;
+        if let Some(blend) = blend {
+            edited.blend = blend;
         }
-        if let Some(o) = f32p(p, "opacity") {
-            e.opacity = o.clamp(0.0, 1.0);
+        if let Some(opacity) = f32p(p, "opacity") {
+            edited.opacity = opacity.clamp(0.0, 1.0);
         }
-        if let Some(n) = name_param(p) {
-            e.name = n.to_string();
+        if let Some(name) = name_param(p) {
+            edited.name = name.to_string();
         }
-        match &mut e.kind {
-            EffectKind::Generator(g) => generator_from(p, g),
-            EffectKind::Levels(l) => levels_from(p, l),
-            EffectKind::Filter(f) => crate::filter_lib::apply(p, f, "effect.set")?,
+
+        match &mut edited.kind {
+            EffectKind::Generator(generator) => generator_from(p, generator),
+            EffectKind::Levels(levels) => levels_from(p, levels),
+            EffectKind::Filter(filter) => crate::filter_lib::apply(p, filter, CMD)?,
             EffectKind::Fill { source, .. } => {
-                if let Some(a) = anchor {
-                    *source = a;
-                } else if let Some(x) = f32p(p, "value")
+                if let Some(anchor) = anchor {
+                    *source = anchor;
+                } else if let Some(value) = f32p(p, "value")
                     && matches!(source, Source::Uniform(_) | Source::Anchor { .. })
                 {
-                    *source = Source::Uniform([x.clamp(0.0, 1.0); 3]);
+                    *source = Source::Uniform([value.clamp(0.0, 1.0); 3]);
                 }
             }
-            EffectKind::ColorSelection { tolerance, .. } | EffectKind::Compare { tolerance, .. } => {
-                if let Some(x) = f32p(p, "tolerance") {
-                    *tolerance = x.clamp(0.0, 1.0);
+            EffectKind::ColorSelection { colors, tolerance } => crate::color_selection_cmds::apply_params(p, colors, tolerance)?,
+            EffectKind::Compare { tolerance, .. } => {
+                if let Some(value) = f32p(p, "tolerance") {
+                    *tolerance = value.clamp(0.0, 1.0);
                 }
             }
             _ => {}

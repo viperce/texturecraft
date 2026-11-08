@@ -2020,6 +2020,7 @@ fn effect_properties(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, eid:
             tool_properties(app, ui);
         }
         EffectKind::Filter(f) => filter_properties(app, ui, id, f),
+        EffectKind::ColorSelection { colors, tolerance } => crate::color_selection_editor::color_selection_properties(app, ui, eid, colors, *tolerance),
         other => {
             ui.label(RichText::new(tr(other.name())).color(tk.text_dim));
         }
