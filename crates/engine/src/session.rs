@@ -648,6 +648,8 @@ impl Session {
         Ok(label)
     }
 
+    /// Bookkeeping after an undo or redo moved the document from `other` to the current one: mark it
+    /// modified, invalidate what changed, and keep the paint target valid.
     fn after_history(&mut self, other: &Document) {
         self.modified = true;
         self.revision = self.revision.wrapping_add(1);
@@ -659,6 +661,28 @@ impl Session {
             let p = &other.project;
             let content = p.effect(e).and_then(|(owner, _)| p.layers.get(&owner)).is_some_and(|l| l.content_effects.iter().any(|x| x.id == e));
             self.target = if content { StackTarget::Content } else { StackTarget::Mask };
+        }
+        self.settle_mask_target(other);
+    }
+
+    /// Keep the paint target valid after undo or redo. The target is not part of the history,
+    /// so a step that adds or removes the selected layer's mask would leave it pointing at a mask
+    /// that does not exist (the next stroke would then silently create a new black mask).
+    /// Undoing "Add mask" goes back to the layer's content; redoing it, or undoing a mask
+    /// delete, goes back to the mask.
+    fn settle_mask_target(&mut self, other: &Document) {
+        let Some(id) = self.selected_layer() else {
+            if self.target == StackTarget::Mask {
+                self.target = StackTarget::Content;
+            }
+            return;
+        };
+        let has_mask = |d: &Document| d.project.layers.get(&d.project.mask_owner(id)).is_some_and(|l| l.mask.is_some());
+        let (now, before) = (has_mask(&self.doc), has_mask(other));
+        if now && !before {
+            self.target = StackTarget::Mask;
+        } else if !now && self.target == StackTarget::Mask {
+            self.target = StackTarget::Content;
         }
     }
 
