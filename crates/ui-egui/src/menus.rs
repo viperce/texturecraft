@@ -197,40 +197,42 @@ pub fn parse_shortcut(s: &str) -> Option<KeyboardShortcut> {
 pub fn menu_bar(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
     let tk = Tokens::get(ui.ctx());
     egui::MenuBar::new().ui(ui, |ui| {
-        let ctx = ui.ctx().clone();
-        for top in TOP {
-            ui.menu_button(tr(top), |ui| {
-                ui.set_min_width(220.0);
-                let mut current_sub: Option<&str> = None;
-                let items: Vec<Item> = CATALOG.iter().filter(|i| i.menu == top).copied().collect();
-                for item in &items {
-                    if let Some(s) = item.sub {
-                        if current_sub == Some(s) {
+        ui.with_layout(craft_ui::direction::row(ui), |ui| {
+            let ctx = ui.ctx().clone();
+            for top in TOP {
+                ui.menu_button(tr(top), |ui| {
+                    ui.set_min_width(220.0);
+                    let mut current_sub: Option<&str> = None;
+                    let items: Vec<Item> = CATALOG.iter().filter(|i| i.menu == top).copied().collect();
+                    for item in &items {
+                        if let Some(s) = item.sub {
+                            if current_sub == Some(s) {
+                                continue;
+                            }
+                            current_sub = Some(s);
+                            ui.menu_button(tr(s), |ui| {
+                                for x in items.iter().filter(|x| x.sub == Some(s)) {
+                                    menu_item(app, &ctx, ui, x);
+                                }
+                            });
                             continue;
                         }
-                        current_sub = Some(s);
-                        ui.menu_button(tr(s), |ui| {
-                            for x in items.iter().filter(|x| x.sub == Some(s)) {
-                                menu_item(app, &ctx, ui, x);
-                            }
-                        });
-                        continue;
+                        if item.label == "-" {
+                            ui.separator();
+                            continue;
+                        }
+                        menu_item(app, &ctx, ui, item);
                     }
-                    if item.label == "-" {
-                        ui.separator();
-                        continue;
-                    }
-                    menu_item(app, &ctx, ui, item);
-                }
+                });
+            }
+            ui.with_layout(craft_ui::direction::trailing(ui), |ui| {
+                let mode = match app.ui.mode {
+                    Mode::Painting => tr("Painting"),
+                    Mode::Baking => tr("Baking"),
+                    Mode::Rendering => tr("Rendering"),
+                };
+                ui.label(egui::RichText::new(mode).size(11.0).color(tk.text_dim));
             });
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mode = match app.ui.mode {
-                Mode::Painting => tr("Painting"),
-                Mode::Baking => tr("Baking"),
-                Mode::Rendering => tr("Rendering"),
-            };
-            ui.label(egui::RichText::new(mode).size(11.0).color(tk.text_dim));
         });
     });
 }

@@ -180,6 +180,8 @@ impl TextureCraftApp {
         app.ui.rename = None;
         app.ui.windows.new_project = false;
         i18n::set_language(&app.ui.prefs.language);
+        let dir = craft_ui::direction::resolve(&app.ui.prefs.language, craft_ui::direction::Setting::Language);
+        craft_ui::direction::apply(&cc.egui_ctx, dir);
         export_templates::load_library(&mut app, cc.storage);
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -521,6 +523,10 @@ impl eframe::App for TextureCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.autosave(now);
         i18n::set_language(&self.ui.prefs.language);
+        let dir = craft_ui::direction::resolve(&self.ui.prefs.language, craft_ui::direction::Setting::Language);
+        craft_ui::direction::apply(ctx, dir);
+        let width = if ctx.content_rect().width() > 0.0 { ctx.content_rect().width() } else { crate::docking::DEFAULT_WINDOW_WIDTH };
+        self.ui.sync_dock_direction(dir == craft_ui::direction::Direction::Rtl, width);
         #[cfg(target_arch = "wasm32")]
         {
             keymap::sync_captured(&self.ui.keymap);

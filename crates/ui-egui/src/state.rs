@@ -249,6 +249,9 @@ pub struct UiState {
     /// The docked, tabbed and floating panels around the viewport.
     #[serde(default)]
     pub dock: Dock,
+    /// Whether the dock layout has been mirrored for a right-to-left interface.
+    #[serde(default)]
+    pub docks_rtl: bool,
     #[serde(default = "Dock::for_baking")]
     pub(crate) inactive_mode_dock: Dock,
     #[serde(default)]
@@ -318,7 +321,20 @@ impl UiState {
         }
 
         *bake_dock = Dock::for_baking();
+        // The default is drawn for a left-to-right interface; keep it in step with the other dock.
+        if self.docks_rtl {
+            bake_dock.mirror(crate::docking::DEFAULT_WINDOW_WIDTH);
+        }
         self.bake_layout_version = BAKE_LAYOUT_VERSION;
+    }
+
+    /// Mirror the active and inactive docks when the language reading direction changes.
+    pub fn sync_dock_direction(&mut self, rtl: bool, width: f32) {
+        if self.docks_rtl != rtl {
+            self.dock.mirror(width);
+            self.inactive_mode_dock.mirror(width);
+            self.docks_rtl = rtl;
+        }
     }
 
     /// Take `layout`'s panels, windows and view settings, keeping this state's dialogs, export
@@ -342,6 +358,7 @@ impl Default for UiState {
             layout: ViewLayout::Split,
             split_ratio: default_split_ratio(),
             dock: Dock::default(),
+            docks_rtl: false,
             inactive_mode_dock: Dock::for_baking(),
             dock_is_baking: false,
             bake_layout_version: BAKE_LAYOUT_VERSION,
@@ -473,6 +490,40 @@ mod tests {
         obj.remove("keymap");
         obj.insert("show_shelf".into(), serde_json::json!(false));
         let ui: UiState = serde_json::from_value(v).unwrap();
+        assert_eq!(ui.dock, Dock::default());
+    }
+
+    #[test]
+    fn an_outdated_bake_dock_is_replaced_by_the_default_for_the_interface_direction() {
+        let mut ui = UiState::default();
+        ui.sync_dock_direction(true, 1600.0);
+        // A bake layout saved before the current version, in a right-to-left session
+        ui.bake_layout_version = 0;
+        ui.sync_mode_dock();
+        let mut want = Dock::for_baking();
+        want.mirror(crate::docking::DEFAULT_WINDOW_WIDTH);
+        assert_ne!(want, Dock::for_baking(), "the bake default is not symmetric");
+        assert_eq!(ui.inactive_mode_dock, want, "the replacement is mirrored like the painting dock");
+        assert_eq!(ui.bake_layout_version, BAKE_LAYOUT_VERSION);
+    }
+
+    #[test]
+    fn docks_follow_the_interface_direction() {
+        let mut ui = UiState::default();
+        assert!(!ui.docks_rtl);
+        ui.sync_dock_direction(true, 1600.0);
+        assert!(ui.docks_rtl);
+        let rtl_dock = ui.dock.clone();
+        // Idempotent: calling again with true does nothing
+        ui.sync_dock_direction(true, 1600.0);
+        assert_eq!(ui.dock, rtl_dock);
+        // Survives serde
+        let json = serde_json::to_string(&ui).unwrap();
+        let restored: UiState = serde_json::from_str(&json).unwrap();
+        assert!(restored.docks_rtl);
+        // Switching back to LTR
+        ui.sync_dock_direction(false, 1600.0);
+        assert!(!ui.docks_rtl);
         assert_eq!(ui.dock, Dock::default());
     }
 }

@@ -36,7 +36,7 @@ pub fn paint_bar(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
     let tokens = Tokens::get(ui.ctx());
     egui::Panel::top("paint_bar").exact_size(40.0).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
         card(ui, &tokens, egui::Margin { bottom: GUTTER, ..Default::default() }, egui::Margin::symmetric(8, 0), |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.with_layout(craft_ui::direction::trailing(ui), |ui| {
                 let button_size = ui.spacing().interact_size.y;
                 let mode_width = 3.0 * button_size + 2.0 * BAR_SPACING;
                 let separator_width = BAR_SEPARATOR_WIDTH + 2.0 * BAR_SPACING;
@@ -344,8 +344,10 @@ pub fn path_controls(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
 
 pub fn tool_shelf(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
     let tokens = Tokens::get(ui.ctx());
-    egui::Panel::left("tool_shelf").resizable(false).exact_size(40.0).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
-        card(ui, &tokens, egui::Margin { left: GUTTER, right: 0, top: GUTTER, bottom: GUTTER }, egui::Margin::symmetric(3, 6), |ui| {
+    let rtl = craft_ui::direction::is_rtl(ui);
+    craft_ui::direction::start_panel(ui, "tool_shelf").resizable(false).exact_size(40.0).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
+        let (left_m, right_m) = if rtl { (0, GUTTER) } else { (GUTTER, 0) };
+        card(ui, &tokens, egui::Margin { left: left_m, right: right_m, top: GUTTER, bottom: GUTTER }, egui::Margin::symmetric(3, 6), |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
             ui.add_enabled_ui(app.ui.mode == Mode::Painting, |ui| {
                 for tool in Tool::ALL {
@@ -383,8 +385,10 @@ pub fn tool_shelf(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
 
 pub fn rail(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
     let tk = Tokens::get(ui.ctx());
-    egui::Panel::right("rail").resizable(false).exact_size(38.0).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
-        card(ui, &tk, egui::Margin { left: 0, right: GUTTER, top: GUTTER, bottom: GUTTER }, egui::Margin::symmetric(3, 6), |ui| {
+    let rtl = craft_ui::direction::is_rtl(ui);
+    craft_ui::direction::end_panel(ui, "rail").resizable(false).exact_size(38.0).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
+        let (left_m, right_m) = if rtl { (GUTTER, 0) } else { (0, GUTTER) };
+        card(ui, &tk, egui::Margin { left: left_m, right: right_m, top: GUTTER, bottom: GUTTER }, egui::Margin::symmetric(3, 6), |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             if icon_button(ui, ic::EXPORT, &tip(&app.ui.keymap, tr("Export textures"), "ui.export"), app.ui.windows.export, 26.0).clicked() {
                 app.ui.windows.export = !app.ui.windows.export;
@@ -410,7 +414,7 @@ pub fn status_bar(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
         .show_separator_line(false)
         .frame(egui::Frame::NONE.fill(tk.chrome).inner_margin(egui::Margin::symmetric(10, 0)))
         .show(ui, |ui| {
-            ui.horizontal_centered(|ui| {
+            ui.with_layout(craft_ui::direction::row(ui), |ui| {
                 if let Some(p) = app.bake_progress() {
                     ui.add(egui::ProgressBar::new(p).desired_width(160.0).desired_height(10.0).text(RichText::new(tr("Baking")).size(10.0)));
                     if ui.small_button(tr("Cancel")).clicked() {
@@ -425,7 +429,7 @@ pub fn status_bar(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
                 } else if let Some(msg) = app.session.log.last() {
                     ui.label(RichText::new(msg).size(11.0).color(tk.text_dim));
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(craft_ui::direction::trailing(ui), |ui| {
                     let gpu = app.gpu.as_ref().map(|g| g.adapter.as_str()).unwrap_or(tr("no GPU"));
                     ui.label(
                         RichText::new(trf("Version: {version} ({gpu})", &[("version", &texturecraft_engine::VERSION), ("gpu", &gpu)]))

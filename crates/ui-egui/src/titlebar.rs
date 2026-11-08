@@ -13,7 +13,7 @@
 
 use craft_window::{Button, Frame, Layout};
 use egui::emath::GuiRounding as _;
-use egui::{Align, Color32, CursorIcon, Id, LayerId, Order, PointerButton, Rect, ResizeDirection, Sense, Stroke, Ui, ViewportCommand, pos2, vec2};
+use egui::{Color32, CursorIcon, Id, LayerId, Order, PointerButton, Rect, ResizeDirection, Sense, Stroke, Ui, ViewportCommand, pos2, vec2};
 
 use crate::TextureCraftApp;
 use crate::i18n::tr;
@@ -122,7 +122,7 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
         let ends = |n: usize| n as f32 * BUTTON_WIDTH;
         let inset = if bar == TitleBar::Integrated { TRAFFIC_LIGHTS } else { ends(left.len()) + PAD };
         let content = Rect::from_min_max(pos2(rect.left() + inset, rect.top()), pos2(rect.right() - ends(right.len()) - PAD, rect.bottom()));
-        ui.scope_builder(egui::UiBuilder::new().max_rect(content).layout(egui::Layout::left_to_right(Align::Center)), |ui| {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(content).layout(craft_ui::direction::row(ui)), |ui| {
             paint_icon(ui);
             crate::menus::menu_bar(app, ui);
         });
@@ -153,7 +153,8 @@ fn paint_icon(ui: &mut Ui) {
         }
     };
     let row = ui.max_rect();
-    let min = pos2(ui.cursor().min.x, row.center().y - ICON / 2.0).round_to_pixels(ppp);
+    let x = if craft_ui::direction::is_rtl(ui) { ui.cursor().max.x - ICON } else { ui.cursor().min.x };
+    let min = pos2(x, row.center().y - ICON / 2.0).round_to_pixels(ppp);
     if let Some(t) = texture {
         let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
         ui.painter().image(t.id(), Rect::from_min_size(min, vec2(ICON, ICON)), uv, Color32::WHITE);

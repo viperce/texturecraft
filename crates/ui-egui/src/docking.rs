@@ -10,7 +10,7 @@
 //! that cannot close or float. The layout persists with `UiState` as a craft-ui `Workspace`;
 //! a layout that does not load or validate becomes the default.
 
-use craft_ui::docking::{Action, DockArea, DockContent, DockStyle, Layout, Location, Node, PanelLimits, PanelState, Permissions, Placement};
+use craft_ui::docking::{Action, DockArea, DockContent, DockStyle, Layout, Location, Node, PanelLimits, PanelState, Permissions, Placement, Zone};
 use craft_ui::layout::{SplitAxis, SplitSize};
 use egui::{Id, Margin, RichText, Ui, vec2};
 use serde::{Deserialize, Serialize};
@@ -117,6 +117,9 @@ impl Panel {
     }
 }
 
+/// The window width the default workspace's ratios are drawn for.
+pub(crate) const DEFAULT_WINDOW_WIDTH: f32 = 1600.0;
+
 /// The saved panel arrangement: craft-ui's workspace over TextureCraft's panels.
 pub type Workspace = craft_ui::docking::Workspace<Panel>;
 
@@ -175,6 +178,97 @@ pub fn default_workspace() -> Workspace {
             },
         ));
     }
+    workspace
+}
+
+fn mirror_split_size(size: &mut SplitSize) {
+    *size = match *size {
+        SplitSize::Ratio(r) => {
+            let mirrored = (((1.0 - f64::from(r)) * 100_000.0).round() / 100_000.0) as f32;
+            SplitSize::Ratio(mirrored.clamp(0.0, 1.0))
+        }
+        SplitSize::FixedFirst(px) => SplitSize::FixedSecond(px),
+        SplitSize::FixedSecond(px) => SplitSize::FixedFirst(px),
+    };
+}
+
+/// Horizontally mirrors a dock node tree (for right-to-left UI layouts).
+pub fn mirror_node(node: &mut Node<Panel>) {
+    match node {
+        Node::Split { axis, size, first, second } => {
+            mirror_node(first);
+            mirror_node(second);
+            if *axis == SplitAxis::Horizontal {
+                std::mem::swap(first, second);
+                mirror_split_size(size);
+            }
+        }
+        Node::Dock { .. } => {
+            // craft-ui draws Node::Dock sides from DockStyle::right_to_left.
+            // Do not touch side here, to avoid double-mirroring.
+        }
+        Node::Tabs { .. } | Node::Stack { .. } => {}
+        _ => {}
+    }
+}
+
+/// Horizontally mirrors a floating window within its container width.
+pub fn mirror_floating(floating: &mut craft_ui::docking::Floating<Panel>, container_width: f32) {
+    mirror_node(&mut floating.root);
+    let [x, y, w, h] = floating.rect;
+    floating.rect = [container_width - w - x, y, w, h];
+}
+
+/// Horizontally mirrors a complete workspace (split tree, floating windows, and hidden slots).
+pub fn mirror_workspace(workspace: &mut Workspace, container_width: f32) {
+    if let Some(root) = &mut workspace.layout.root {
+        mirror_node(root);
+    }
+    for floating in &mut workspace.layout.floating {
+        mirror_floating(floating, container_width);
+    }
+    for (_, location) in &mut workspace.hidden {
+        if let Some(rect) = location.floating.as_mut() {
+            rect[0] = container_width - rect[2] - rect[0];
+        }
+        match &mut location.placement {
+            Placement::Split(zone) => match zone {
+                Zone::Left => {
+                    *zone = Zone::Right;
+                    if let Some(size) = location.size.as_mut() {
+                        mirror_split_size(size);
+                    }
+                }
+                Zone::Right => {
+                    *zone = Zone::Left;
+                    if let Some(size) = location.size.as_mut() {
+                        mirror_split_size(size);
+                    }
+                }
+                _ => {}
+            },
+            Placement::SplitSized { zone, size, outer } => {
+                match zone {
+                    Zone::Left => *zone = Zone::Right,
+                    Zone::Right => *zone = Zone::Left,
+                    _ => {}
+                }
+                mirror_split_size(size);
+                mirror_split_size(outer);
+                if let Some(s) = location.size.as_mut() {
+                    mirror_split_size(s);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The default workspace mirrored for right-to-left UI layouts (Arabic): texture set list, layers
+/// and properties on the left; viewport in the middle; assets on the right.
+pub fn default_workspace_rtl() -> Workspace {
+    let mut workspace = default_workspace();
+    mirror_workspace(&mut workspace, DEFAULT_WINDOW_WIDTH);
     workspace
 }
 
@@ -310,6 +404,11 @@ impl Dock {
         &self.workspace
     }
 
+    /// Horizontally mirror this dock's workspace.
+    pub fn mirror(&mut self, container_width: f32) {
+        mirror_workspace(&mut self.workspace, container_width);
+    }
+
     pub fn is_open(&self, p: Panel) -> bool {
         self.workspace.layout.contains(&p)
     }
@@ -367,6 +466,7 @@ fn area_id() -> Id {
 /// without hard lines, the shown tab a pill.
 fn style(ui: &Ui, t: &Tokens) -> DockStyle {
     let mut s = DockStyle::from_ui(ui);
+    s.right_to_left = craft_ui::direction::is_rtl(ui);
     s.gap = f32::from(crate::theme::GUTTER);
     // Smallest panel extent a divider drag leaves.
     s.min_pane = 60.0;
@@ -498,6 +598,58 @@ mod tests {
             assert!(w.layout.contains(&panel) || w.hidden.iter().any(|(p, _)| *p == panel), "{panel:?} is neither shown nor hidden");
         }
         assert_eq!(panels_of(&w), [Panel::Assets, Panel::Viewport, Panel::TextureSetList, Panel::Layers, Panel::TextureSetSettings, Panel::Properties]);
+    }
+
+    #[test]
+    fn default_workspace_rtl_is_valid_and_mirrored() {
+        let w_rtl = default_workspace_rtl();
+        assert!(validate(&w_rtl).is_ok());
+        for panel in Panel::ALL {
+            assert!(w_rtl.layout.contains(&panel) || w_rtl.hidden.iter().any(|(p, _)| *p == panel), "{panel:?} is neither shown nor hidden");
+        }
+        assert_eq!(panels_of(&w_rtl), [Panel::TextureSetList, Panel::Layers, Panel::TextureSetSettings, Panel::Properties, Panel::Viewport, Panel::Assets]);
+        let mut mirrored_back = w_rtl.clone();
+        mirror_workspace(&mut mirrored_back, DEFAULT_WINDOW_WIDTH);
+        assert_eq!(panels_of(&mirrored_back), panels_of(&default_workspace()));
+    }
+
+    #[test]
+    fn mirror_workspace_round_trips() {
+        let mut original = default_workspace();
+        // An off-edge floating window
+        original.hidden.retain(|(p, _)| *p != Panel::Display);
+        original.layout.floating.push(craft_ui::docking::Floating::new(tabs(&[Panel::Display]), [1500.0, 100.0, 300.0, 400.0]));
+        // A closed panel with placement and size
+        if let Some(loc) = original.hidden.iter_mut().find(|(p, _)| *p == Panel::Shader) {
+            loc.1.placement = Placement::SplitSized { zone: Zone::Left, size: SplitSize::Ratio(0.25), outer: SplitSize::Ratio(0.75) };
+            loc.1.size = Some(SplitSize::Ratio(0.25));
+        }
+
+        let mut round_trip = original.clone();
+        mirror_workspace(&mut round_trip, DEFAULT_WINDOW_WIDTH);
+        mirror_workspace(&mut round_trip, DEFAULT_WINDOW_WIDTH);
+        assert_eq!(panels_of(&round_trip), panels_of(&original));
+        assert_eq!(round_trip.hidden, original.hidden);
+        assert_eq!(round_trip.layout.floating, original.layout.floating);
+        assert!(validate(&round_trip).is_ok());
+    }
+
+    #[test]
+    fn mirror_workspace_flips_closed_panel_places() {
+        let mut w = default_workspace();
+        if let Some(loc) = w.hidden.iter_mut().find(|(p, _)| *p == Panel::Shader) {
+            loc.1.placement = Placement::SplitSized { zone: Zone::Left, size: SplitSize::Ratio(0.25), outer: SplitSize::Ratio(0.75) };
+        }
+        mirror_workspace(&mut w, DEFAULT_WINDOW_WIDTH);
+        let loc = w.hidden.iter().find(|(p, _)| *p == Panel::Shader).unwrap();
+        match &loc.1.placement {
+            Placement::SplitSized { zone, size, outer } => {
+                assert_eq!(*zone, Zone::Right);
+                assert_eq!(*size, SplitSize::Ratio(0.75));
+                assert_eq!(*outer, SplitSize::Ratio(0.25));
+            }
+            _ => panic!("unexpected placement"),
+        }
     }
 
     #[test]
