@@ -602,25 +602,46 @@ fn overlay(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, on_gpu: bool) {
 }
 
 /// Save the shown render as PNG.
-fn save(app: &mut TextureCraftApp) {
-    let Some((w, h, rgba)) = app.render.shown.clone() else { return };
+/// Writes the shown render to `path`, the save dialog's answer.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn save_to(app: &mut TextureCraftApp, path: &std::path::Path) {
+    // The mode may have changed while the sheet was open, which clears the render.
+    let Some((w, h, rgba)) = app.render.shown.clone() else {
+        app.toast(tr("Couldn't encode the render"), true);
+        return;
+    };
     let Some(png) = crate::control::encode_png(w, h, rgba).map(|(_, _, png)| png) else {
         app.toast(tr("Couldn't encode the render"), true);
         return;
     };
+    match std::fs::write(path, png) {
+        Ok(()) => app.toast(trf("Saved {path}", &[("path", &path.display())]), false),
+        Err(e) => app.toast(trf("Couldn't save the render: {error}", &[("error", &e)]), true),
+    }
+}
+
+fn save(app: &mut TextureCraftApp) {
+    if app.render.shown.is_none() {
+        return;
+    }
     let name = format!("{}_render.png", texturecraft_engine::formats::export::sanitize_file_stem(&app.session.doc.project.name));
+    // The native build encodes once the dialog has answered, in `save_to`.
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let Some(path) = rfd::FileDialog::new().add_filter(tr("PNG image"), &["png"]).set_file_name(name).save_file() else { return };
-        match std::fs::write(&path, png) {
-            Ok(()) => app.toast(trf("Saved {path}", &[("path", &path.display())]), false),
-            Err(e) => app.toast(trf("Couldn't save the render: {error}", &[("error", &e)]), true),
-        }
+        use crate::picker::{Kind, Request};
+        app.picker.ask("render.save", Request::new(Kind::Save).filter(tr("PNG image"), &["png"]).name(name));
     }
     #[cfg(target_arch = "wasm32")]
-    match crate::web_files::download(&name, &png) {
-        Ok(()) => app.toast(trf("Downloaded {name}", &[("name", &name)]), false),
-        Err(e) => app.toast(trf("Couldn't save the render: {error}", &[("error", &e)]), true),
+    {
+        let Some((w, h, rgba)) = app.render.shown.clone() else { return };
+        let Some(png) = crate::control::encode_png(w, h, rgba).map(|(_, _, png)| png) else {
+            app.toast(tr("Couldn't encode the render"), true);
+            return;
+        };
+        match crate::web_files::download(&name, &png) {
+            Ok(()) => app.toast(trf("Downloaded {name}", &[("name", &name)]), false),
+            Err(e) => app.toast(trf("Couldn't save the render: {error}", &[("error", &e)]), true),
+        }
     }
 }
 

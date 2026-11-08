@@ -26,6 +26,10 @@ rfd = { workspace = true }
 zip = { workspace = true }
 
 # The OS UI language for the first run (MIT OR Apache-2.0; the browser asks `navigator.language`).
+# macOS file dialogs are sheets (picker.rs): waiting for their answer. MIT OR Apache-2.0, already in the build.
+[target.'cfg(target_os = "macos")'.dependencies]
+pollster = "1"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sys-locale = "0.3"
 # Floating panels open as OS windows.

@@ -81,19 +81,22 @@ pub fn poll(app: &mut TextureCraftApp) {
 /// the browser they arrive on a later frame.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn import_bake_mesh(app: &mut TextureCraftApp, _ctx: &egui::Context, cage: bool) {
-    let dialog = rfd::FileDialog::new().add_filter(tr("Meshes"), &MESH_EXTENSIONS);
-    let paths = if cage { dialog.pick_file().into_iter().collect() } else { dialog.pick_files().unwrap_or_default() };
-    for p in paths {
-        let cmd = if cage { "bake.cage.set" } else { "bake.highPoly.add" };
-        app.run(cmd, serde_json::json!({ "path": p.display().to_string() }));
-    }
+    use crate::picker::{Kind, Request};
+    let kind = if cage { Kind::Open } else { Kind::OpenMany };
+    app.picker.ask(if cage { "bake.cage" } else { "bake.highPoly" }, Request::new(kind).filter(tr("Meshes"), &MESH_EXTENSIONS));
 }
 
 /// Display settings › Import HDR: pick an equirect `.hdr`/`.exr`, import it as a resource and
 /// light the scene with it (in the browser the file arrives on a later frame).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn import_environment(app: &mut TextureCraftApp, _ctx: &egui::Context) {
-    let Some(p) = rfd::FileDialog::new().add_filter(tr("HDR environments"), ENV_EXTS).pick_file() else { return };
+    use crate::picker::{Kind, Request};
+    app.picker.ask("environment", Request::new(Kind::Open).filter(tr("HDR environments"), ENV_EXTS));
+}
+
+/// Imports the HDR file the dialog picked and lights the scene with it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn imported_environment(app: &mut TextureCraftApp, p: &std::path::Path) {
     if let Some(r) = app.run("resource.import", serde_json::json!({ "path": p.display().to_string() }))
         && let Some(name) = r.get("name").and_then(|n| n.as_str())
     {

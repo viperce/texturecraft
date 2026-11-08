@@ -20,6 +20,7 @@ mod mask_preview_image;
 mod mask_shape;
 pub mod menus;
 pub mod parity;
+pub mod picker;
 mod preview_image;
 mod preview_request;
 mod preview_worker;
@@ -86,6 +87,8 @@ pub struct TextureCraftApp {
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
     pub ui: UiState,
+    /// The native file dialog that is open, and what it picked ([`picker`])
+    pub picker: picker::Picker,
     pub gpu: Option<gpu::GpuLink>,
     pub control: Option<std::sync::mpsc::Receiver<ControlRequest>>,
     pub toasts: Vec<Toast>,
@@ -150,6 +153,7 @@ impl TextureCraftApp {
             camera_glide: None,
             session,
             ui,
+            picker: picker::Picker::default(),
             gpu,
             control: None,
             toasts: Vec::new(),
@@ -501,6 +505,13 @@ impl eframe::App for TextureCraftApp {
         self.step_camera_glide(ctx);
         control::poll(self, ctx);
         web_files::poll(self);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.picker.poll(ctx);
+            if let Some((tag, paths)) = self.picker.take() {
+                windows::picked(self, &tag, paths);
+            }
+        }
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         for f in &dropped {
             web_files::dropped(self, ctx, f);

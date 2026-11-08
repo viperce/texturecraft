@@ -174,8 +174,11 @@ fn main() {
     texturecraft_ui_egui::i18n::set_language(texturecraft_ui_egui::i18n::os_language());
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // A message box needs the main thread on macOS; other threads' panics are only logged.
-        fatal(&format!("internal error: {info}"), std::thread::current().name() == Some("main"));
+        // A message box needs the main thread on macOS, and there it would run a modal loop inside the
+        // panic hook: a panic raised in the window's event handler (winit's re-entrancy guard) then
+        // nests a second event loop in it before the process aborts. macOS only logs; the system's
+        // crash report follows. Other threads' panics are only logged.
+        fatal(&format!("internal error: {info}"), !cfg!(target_os = "macos") && std::thread::current().name() == Some("main"));
         prev(info);
     }));
     let session = initial_session(&args);

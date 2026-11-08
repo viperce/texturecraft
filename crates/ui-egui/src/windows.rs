@@ -11,6 +11,7 @@ use texturecraft_render::ibl::ENVIRONMENTS;
 use crate::TextureCraftApp;
 use crate::i18n::LANGUAGES;
 use crate::i18n::{tr, trf};
+use crate::picker::{Kind, Request};
 use crate::state::Mode;
 use crate::theme::{Accent, Brightness, Tokens, caption};
 use crate::widgets::{color_swatch, combo, icon_button, primary_button, slider, slider_edit};
@@ -413,11 +414,8 @@ fn new_project(app: &mut TextureCraftApp, ctx: &egui::Context) {
                         }
                     }
                 });
-                if file_dialogs_available()
-                    && ui.button(tr("Select...")).clicked()
-                    && let Some(p) = pick_mesh_file()
-                {
-                    app.ui.new_project.file = Some(p);
+                if file_dialogs_available() && ui.button(tr("Select...")).clicked() {
+                    app.picker.ask("newProjectMesh", mesh_request());
                 }
             });
             ui.end_row();
@@ -596,10 +594,8 @@ fn settings(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     let default = crate::data_folder("").display().to_string();
                     ui.add(egui::TextEdit::singleline(&mut p.data_folder).hint_text(default).desired_width(260.0));
-                    if ui.button("...").clicked()
-                        && let Some(d) = rfd::FileDialog::new().set_directory(crate::data_folder(&p.data_folder)).pick_folder()
-                    {
-                        p.data_folder = d.display().to_string();
+                    if ui.button("...").clicked() {
+                        app.picker.ask("dataFolder", Request::new(Kind::Folder).dir(crate::data_folder(&p.data_folder)));
                     }
                 });
                 ui.end_row();
@@ -692,14 +688,9 @@ pub fn file_dialogs_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn pick_mesh_file() -> Option<String> {
-    rfd::FileDialog::new().add_filter(tr("3D meshes"), &texturecraft_engine::formats::mesh_import::MESH_EXTENSIONS).pick_file().map(|p| p.display().to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn pick_mesh_file() -> Option<String> {
-    None
+/// The dialog for a 3D mesh to open.
+fn mesh_request() -> Request {
+    Request::new(Kind::Open).filter(tr("3D meshes"), &texturecraft_engine::formats::mesh_import::MESH_EXTENSIONS)
 }
 
 /// Remember a project path in File ▸ Recent projects.
@@ -713,18 +704,23 @@ pub fn remember(app: &mut TextureCraftApp, path: &str) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn layout_file(app: &mut TextureCraftApp, save: bool) {
     let dir = crate::user_dir("layouts");
-    let dialog = rfd::FileDialog::new().add_filter(tr("UI layout"), &["json"]).set_directory(&dir);
+    let request = Request::new(if save { Kind::Save } else { Kind::Open }).filter(tr("UI layout"), &["json"]).dir(dir);
+    app.picker.ask(if save { "layout.save" } else { "layout.load" }, if save { request.name("layout.json") } else { request });
+}
+
+/// Saves or loads the UI layout file the dialog picked.
+#[cfg(not(target_arch = "wasm32"))]
+fn layout_picked(app: &mut TextureCraftApp, save: bool, path: &std::path::Path) {
     let result = if save {
-        let Some(path) = dialog.set_file_name("layout.json").save_file() else { return };
         let layout = crate::UiState { recent: Vec::new(), ..app.ui.clone() };
+        let dir = crate::user_dir("layouts");
         std::fs::create_dir_all(&dir)
             .map_err(|e| e.to_string())
             .and_then(|_| serde_json::to_vec_pretty(&layout).map_err(|e| e.to_string()))
-            .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()))
+            .and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()))
             .map(|_| trf("Saved UI layout {path}", &[("path", &path.display())]))
     } else {
-        let Some(path) = dialog.pick_file() else { return };
-        std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| serde_json::from_slice::<crate::UiState>(&bytes).map_err(|e| e.to_string())).map(
+        std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| serde_json::from_slice::<crate::UiState>(&bytes).map_err(|e| e.to_string())).map(
             |layout| {
                 app.ui.adopt_layout(layout);
                 trf("Loaded UI layout {path}", &[("path", &path.display())])
@@ -743,15 +739,13 @@ pub fn layout_file(app: &mut TextureCraftApp, _save: bool) {
     app.toast(tr("Saving UI layouts to files is available in the desktop app"), false);
 }
 
-/// File menu actions that need dialogs. Returns true when handled.
+/// File menu actions that need dialogs. Returns true when handled. A dialog's answer comes to
+/// [`picked`], in the same frame or (macOS sheets) a later one.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) -> bool {
     match id {
         "file.open" => {
-            let pick = rfd::FileDialog::new().add_filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS).pick_file();
-            if let Some(p) = pick {
-                open_path(app, &p.display().to_string());
-            }
+            app.picker.ask("file.open", Request::new(Kind::Open).filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS));
             true
         }
         "file.save" if app.session.path.is_some() => {
@@ -763,39 +757,77 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
         }
         "file.save" | "file.saveAs" | "file.saveCopy" => {
             let name = crate::web_files::project_file_name(app);
-            if let Some(p) =
-                rfd::FileDialog::new().add_filter(tr("TextureCraft project"), &[texturecraft_engine::core::PROJECT_EXT]).set_file_name(name).save_file()
-            {
-                let path = p.display().to_string();
-                let cmd = if id == "file.saveCopy" { "file.saveCopy" } else { "file.saveAs" };
-                if app.run(cmd, json!({"path": path})).is_some() {
-                    remember(app, &path);
-                    app.toast(trf("Saved {path}", &[("path", &path)]), false);
-                }
-            }
+            let tag = if id == "file.saveCopy" { "file.saveCopy" } else { "file.saveAs" };
+            app.picker.ask(tag, Request::new(Kind::Save).filter(tr("TextureCraft project"), &[texturecraft_engine::core::PROJECT_EXT]).name(name));
             true
         }
         "material.load" => {
-            for p in rfd::FileDialog::new().add_filter(tr("Materials"), crate::web_files::MATERIAL_EXTS).pick_files().unwrap_or_default() {
-                app.run("material.load", json!({"path": p.display().to_string()}));
-            }
+            app.picker.ask("material.load", Request::new(Kind::OpenMany).filter(tr("Materials"), crate::web_files::MATERIAL_EXTS));
             true
         }
         "file.importResources" | "resource.import" => {
-            let picks = rfd::FileDialog::new().add_filter(tr("Images"), crate::web_files::IMAGE_EXTS).pick_files();
-            for p in picks.unwrap_or_default() {
+            app.picker.ask("resource.import", Request::new(Kind::OpenMany).filter(tr("Images"), crate::web_files::IMAGE_EXTS));
+            true
+        }
+        "file.importMaterialX" => {
+            app.picker.ask("file.importMaterialX", Request::new(Kind::Open).filter(tr("MaterialX materials"), &["mtlx"]));
+            true
+        }
+        "file.exportMesh" => {
+            let name = format!("{}.obj", texturecraft_engine::formats::export::sanitize_file_stem(&app.session.doc.project.name));
+            let request = Request::new(Kind::Save)
+                .filter(tr("Wavefront OBJ with MTL, textures alongside"), &["obj"])
+                .filter(tr("glTF binary with textures"), &["glb"])
+                .filter(tr("USDZ with textures"), &["usdz"])
+                .filter(tr("USD text, textures alongside"), &["usda"])
+                .filter(tr("USD binary, textures alongside"), &["usdc"])
+                .name(name);
+            app.picker.ask("file.exportMesh", request);
+            true
+        }
+        "file.reimportMesh" => {
+            // Painted strokes follow the surface when the new mesh's UVs differ.
+            match app.session.mesh_source {
+                Some(_) => {
+                    app.run("file.reimportMesh", json!({"path": null, "preserveStrokes": true}));
+                }
+                None => app.picker.ask("file.reimportMesh", mesh_request()),
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// What the file dialog `tag` ([`crate::picker::Picker::ask`]) picked.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn picked(app: &mut TextureCraftApp, tag: &str, paths: Vec<std::path::PathBuf>) {
+    let Some(first) = paths.first() else { return };
+    let shown = first.display().to_string();
+    match tag {
+        "file.open" => open_path(app, &shown),
+        "file.saveAs" | "file.saveCopy" => {
+            if app.run(tag, json!({"path": shown})).is_some() {
+                remember(app, &shown);
+                app.toast(trf("Saved {path}", &[("path", &shown)]), false);
+            }
+        }
+        "material.load" => {
+            for p in &paths {
+                app.run("material.load", json!({"path": p.display().to_string()}));
+            }
+        }
+        "resource.import" => {
+            for p in &paths {
                 if let Some(r) = app.run("resource.import", json!({"path": p.display().to_string()})) {
                     let name = r.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string();
                     app.toast(trf("Imported {name}", &[("name", &name)]), false);
                 }
             }
             app.ui.dock.focus(crate::docking::Panel::Assets);
-            true
         }
         "file.importMaterialX" => {
-            if let Some(p) = rfd::FileDialog::new().add_filter(tr("MaterialX materials"), &["mtlx"]).pick_file()
-                && let Some(r) = app.run("file.importMaterialX", json!({"path": p.display().to_string()}))
-            {
+            if let Some(r) = app.run("file.importMaterialX", json!({"path": shown})) {
                 let name = r.get("material").and_then(|n| n.as_str()).unwrap_or_default().to_string();
                 for w in r.get("warnings").and_then(|w| w.as_array()).into_iter().flatten().filter_map(|w| w.as_str()) {
                     app.session.log.push(format!("MaterialX {name}: {w}"));
@@ -803,38 +835,34 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
                 app.toast(trf("Imported {name}", &[("name", &name)]), false);
                 app.ui.dock.focus(crate::docking::Panel::Layers);
             }
-            true
         }
         "file.exportMesh" => {
-            let name = format!("{}.obj", texturecraft_engine::formats::export::sanitize_file_stem(&app.session.doc.project.name));
-            if let Some(p) = rfd::FileDialog::new()
-                .add_filter(tr("Wavefront OBJ with MTL, textures alongside"), &["obj"])
-                .add_filter(tr("glTF binary with textures"), &["glb"])
-                .add_filter(tr("USDZ with textures"), &["usdz"])
-                .add_filter(tr("USD text, textures alongside"), &["usda"])
-                .add_filter(tr("USD binary, textures alongside"), &["usdc"])
-                .set_file_name(name)
-                .save_file()
-                && let Some(r) = app.run("file.exportMesh", json!({"path": p.display().to_string()}))
-            {
+            if let Some(r) = app.run("file.exportMesh", json!({"path": shown})) {
                 let p = r.get("path").and_then(|p| p.as_str()).unwrap_or_default().to_string();
                 app.toast(trf("Exported mesh to {path}", &[("path", &p)]), false);
             }
-            true
         }
         "file.reimportMesh" => {
-            // Painted strokes follow the surface when the new mesh's UVs differ.
-            let path = match app.session.mesh_source {
-                Some(_) => None,
-                None => match rfd::FileDialog::new().add_filter(tr("3D meshes"), &texturecraft_engine::formats::mesh_import::MESH_EXTENSIONS).pick_file() {
-                    Some(p) => Some(p.display().to_string()),
-                    None => return true,
-                },
-            };
-            app.run("file.reimportMesh", json!({"path": path, "preserveStrokes": true}));
-            true
+            app.run("file.reimportMesh", json!({"path": shown, "preserveStrokes": true}));
         }
-        _ => false,
+        "newProjectMesh" => app.ui.new_project.file = Some(shown),
+        "dataFolder" => app.ui.prefs.data_folder = shown,
+        "exportDir" => app.ui.export.dir = shown,
+        "layout.save" => layout_picked(app, true, first),
+        "layout.load" => layout_picked(app, false, first),
+        "template.import" => crate::export_templates::imported_file(app, first),
+        "template.export" => crate::export_templates::write_selected(app, Some(first)),
+        "render.save" => crate::render_mode::save_to(app, first),
+        "environment" => crate::web_files::imported_environment(app, first),
+        "bake.cage" => {
+            app.run("bake.cage.set", json!({"path": shown}));
+        }
+        "bake.highPoly" => {
+            for p in &paths {
+                app.run("bake.highPoly.add", json!({"path": p.display().to_string()}));
+            }
+        }
+        other => log::warn!("a file dialog answered for an unknown request: {other}"),
     }
 }
 
@@ -925,10 +953,8 @@ fn export_settings_tab(app: &mut TextureCraftApp, ui: &mut Ui, presets: &[textur
             ui.label(tr("Output directory"));
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut app.ui.export.dir).desired_width(360.0));
-                if ui.button("...").clicked()
-                    && let Some(d) = rfd::FileDialog::new().set_directory(&app.ui.export.dir).pick_folder()
-                {
-                    app.ui.export.dir = d.display().to_string();
+                if ui.button("...").clicked() {
+                    app.picker.ask("exportDir", Request::new(Kind::Folder).dir(app.ui.export.dir.clone()));
                 }
             });
             ui.end_row();
