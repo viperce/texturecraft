@@ -1060,4 +1060,9 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Remove resolution override", "Remover resolução personalizada"),
     ("Texture set resolution", "Resolução do conjunto de texturas"),
     ("UV tile {tile} resolution", "Resolução do tile UV {tile}"),
+    ("Baking Visualization", "Visualização do bake"),
+    ("Show for Selected Texture Set Only", "Mostrar apenas para o conjunto de texturas selecionado"),
+    ("High Definition Mesh (HP)", "Malha de alta resolução (HP)"),
+    ("UV Seams", "Costuras UV"),
+    ("Project Mesh (LP)", "Malha de projeção (LP)"),
 ];

@@ -296,6 +296,9 @@ pub struct UiState {
     /// The brush that paints the skew correction map in the 2D view of bake mode.
     #[serde(default)]
     pub bake_paint_brush: crate::bake_mode::BakePaintBrush,
+    /// What bake mode's 3D view draws besides the low poly (the Baking Visualization panel)
+    #[serde(default)]
+    pub bake_visualization: crate::bake_mode::BakeVisualizationToggles,
 }
 
 impl UiState {
@@ -365,6 +368,7 @@ impl Default for UiState {
             recent: Vec::new(),
             keymap: Keymap::new(),
             bake_paint_brush: crate::bake_mode::BakePaintBrush::default(),
+            bake_visualization: crate::bake_mode::BakeVisualizationToggles::default(),
         }
     }
 }

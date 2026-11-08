@@ -4,6 +4,9 @@ use glam::{Vec2, Vec3, Vec4};
 
 use crate::{GeomError, Result};
 
+/// An edge by the bits of its two end positions, the lower one first
+type EdgePositions = ([u32; 3], [u32; 3]);
+
 /// A contiguous index range drawn with one material.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubMesh {
@@ -103,6 +106,37 @@ impl Mesh {
                     }
                 }
                 edges.into_iter().filter(|(_, real, n)| *real || *n == 1).map(|(k, ..)| k).collect()
+            })
+            .collect()
+    }
+
+    /// Edges where the UV layout splits: two triangles meet there in 3D but not in UV space, per material in `0..materials.len().max(1)`
+    pub fn uv_seam_edges(&self) -> Vec<Vec<(u32, u32)>> {
+        let bits = |position: Vec3| position.to_array().map(f32::to_bits);
+        (0..self.materials.len().max(1))
+            .map(|material| {
+                // Each 3D edge (by position) with the vertex pairs of the triangles that use it, the lower position first
+                let mut sides: std::collections::HashMap<EdgePositions, Vec<(u32, u32)>> = std::collections::HashMap::new();
+                for triangle in self.triangles_of(material) {
+                    let Some(corners) = self.indices.get(triangle * 3..triangle * 3 + 3) else { continue };
+
+                    for (from, to) in [(corners[0], corners[1]), (corners[1], corners[2]), (corners[2], corners[0])] {
+                        let (Some(from_position), Some(to_position)) = (self.positions.get(from as usize), self.positions.get(to as usize)) else { continue };
+                        let (from_bits, to_bits) = (bits(*from_position), bits(*to_position));
+                        let side = if from_bits <= to_bits { ((from_bits, to_bits), (from, to)) } else { ((to_bits, from_bits), (to, from)) };
+                        sides.entry(side.0).or_default().push(side.1);
+                    }
+                }
+
+                let uv = |index: u32| self.uvs.get(index as usize).copied();
+                let mut seams: Vec<(u32, u32)> = sides
+                    .into_values()
+                    .filter(|pairs| pairs.iter().any(|&(from, to)| (uv(from), uv(to)) != (uv(pairs[0].0), uv(pairs[0].1))))
+                    .flat_map(|pairs| pairs.into_iter().map(|(from, to)| (from.min(to), from.max(to))))
+                    .collect();
+                seams.sort_unstable();
+                seams.dedup();
+                seams
             })
             .collect()
     }
@@ -431,6 +465,26 @@ mod tests {
         a.append(&m);
         assert_eq!(a.diagonals, vec![0, 0b100, 0b001]);
         assert_eq!(crate::primitives::plane(1.0, 2).wire_edges()[0].len(), 12, "a 2×2 grid of quads has 12 edges");
+    }
+
+    #[test]
+    fn uv_seams_are_where_the_uv_layout_splits() {
+        let mesh = quad();
+        assert_eq!(mesh.uv_seam_edges(), vec![Vec::<(u32, u32)>::new()], "one UV island has no seam");
+
+        // Vertex 4 copies vertex 0's position with another UV: the diagonal (0, 2) / (4, 2) is cut
+        let mut seam = mesh.clone();
+        seam.positions.push(seam.positions[0]);
+        seam.normals.push(seam.normals[0]);
+        seam.tangents.push(seam.tangents[0]);
+        seam.uvs.push(Vec2::new(0.9, 0.9));
+        seam.indices[3] = 4;
+        assert_eq!(seam.uv_seam_edges(), vec![vec![(0, 2), (2, 4)]]);
+
+        // The same split with the same UV is a hard edge, not a seam
+        let mut hard = seam.clone();
+        hard.uvs[4] = hard.uvs[0];
+        assert_eq!(hard.uv_seam_edges(), vec![Vec::<(u32, u32)>::new()]);
     }
 
     #[test]

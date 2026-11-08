@@ -1,5 +1,6 @@
 //! Baking tasks, commands, settings helpers, and the mesh-map baking API
 
+mod bake_cage_inputs;
 mod bake_mesh;
 mod bake_meshes;
 mod bake_task;
@@ -11,6 +12,7 @@ mod paint_command;
 mod preserve_tiles;
 mod tile_command;
 
+pub use bake_cage_inputs::BakeCageInputs;
 pub use bake_mesh::BakeMesh;
 pub use bake_meshes::BakeMeshes;
 pub use bake_task::BakeTask;

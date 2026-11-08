@@ -1057,4 +1057,9 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Remove resolution override", "解像度の上書きを解除"),
     ("Texture set resolution", "テクスチャセットの解像度"),
     ("UV tile {tile} resolution", "UVタイル {tile} の解像度"),
+    ("Baking Visualization", "ベイクの可視化"),
+    ("Show for Selected Texture Set Only", "選択したテクスチャセットのみ表示"),
+    ("High Definition Mesh (HP)", "ハイポリメッシュ (HP)"),
+    ("UV Seams", "UVシーム"),
+    ("Project Mesh (LP)", "投影メッシュ (LP)"),
 ];

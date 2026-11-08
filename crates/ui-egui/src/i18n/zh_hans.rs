@@ -1003,4 +1003,9 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Remove resolution override", "移除分辨率覆盖"),
     ("Texture set resolution", "纹理集分辨率"),
     ("UV tile {tile} resolution", "UV 图块 {tile} 的分辨率"),
+    ("Baking Visualization", "烘焙可视化"),
+    ("Show for Selected Texture Set Only", "仅显示所选纹理集"),
+    ("High Definition Mesh (HP)", "高模网格 (HP)"),
+    ("UV Seams", "UV 接缝"),
+    ("Project Mesh (LP)", "投射网格 (LP)"),
 ];

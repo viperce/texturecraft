@@ -1045,4 +1045,9 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Remove resolution override", "해상도 재정의 제거"),
     ("Texture set resolution", "텍스처 세트 해상도"),
     ("UV tile {tile} resolution", "UV 타일 {tile} 해상도"),
+    ("Baking Visualization", "베이크 시각화"),
+    ("Show for Selected Texture Set Only", "선택한 텍스처 세트만 표시"),
+    ("High Definition Mesh (HP)", "하이 폴리 메시 (HP)"),
+    ("UV Seams", "UV 심"),
+    ("Project Mesh (LP)", "투영 메시 (LP)"),
 ];
