@@ -660,6 +660,46 @@ fn bump_tilts_the_baked_normal() {
     assert!(height[quad_texel(64, 0.0, 0.0)] > height[quad_texel(64, 0.6, 0.6)] + 0.2, "the bump top is higher");
 }
 
+/// The world normal the viewport shows for tangent-space `normal` at barycentrics `(b1, b2)` of
+/// `triangle`, framed as `crates/render/src/shaders/mesh.wgsl` frames it: every vertex attribute
+/// interpolated, the bitangent sign `tan.w` included.
+fn viewport_normal(mesh: &Mesh, triangle: u32, [b1, b2]: [f32; 2], normal: Vec3) -> Vec3 {
+    let [a, b, c] = mesh.tri(triangle as usize).unwrap();
+    let weights = [1.0 - b1 - b2, b1, b2];
+    let n = (mesh.normals[a] * weights[0] + mesh.normals[b] * weights[1] + mesh.normals[c] * weights[2]).normalize();
+    let tan = mesh.tangents[a] * weights[0] + mesh.tangents[b] * weights[1] + mesh.tangents[c] * weights[2];
+    let t = (tan.truncate() - n * n.dot(tan.truncate())).normalize();
+    (t * normal.x + n.cross(t) * tan.w * normal.y + n * normal.z).normalize()
+}
+
+/// Two triangles sharing only their apex, the second with mirrored UVs, so MikkTSpace gives the
+/// apex a different bitangent sign in each. Baked from a tilted plane, every texel must decode in
+/// the viewport's frame to the plane's normal. With one tangent per vertex, one triangle's apex
+/// carried the other's sign: the bake took the sign of its first corner while the viewport
+/// interpolated it, and texels near the apex decoded tens of degrees off.
+#[test]
+fn mirrored_triangles_sharing_a_vertex_decode_in_the_viewport_as_baked() {
+    let positions = [Vec3::ZERO, Vec3::new(-1.0, 0.0, -1.0), Vec3::new(-1.0, 0.0, 1.0), Vec3::new(1.0, 0.0, -1.0), Vec3::new(1.0, 0.0, 1.0)];
+    let uvs = positions.map(|p| Vec2::new(0.5 + 0.5 * p.x, 0.5 + 0.5 * p.z * if p.x > 0.0 { -1.0 } else { 1.0 }));
+    let low = Mesh::from_parts(positions.to_vec(), Some(vec![Vec3::Y; 5]), uvs.to_vec(), vec![0, 1, 2, 0, 4, 3], "Bowtie").unwrap();
+    let tilt = Vec3::new(0.3, 1.0, -0.4).normalize();
+    let corners = [(-1.5, -1.5), (-1.5, 1.5), (1.5, 1.5), (1.5, -1.5)].map(|(x, z)| Vec3::new(x, -(tilt.x * x + tilt.z * z) / tilt.y, z));
+    let high = Mesh::from_parts(corners.to_vec(), Some(vec![tilt; 4]), vec![Vec2::ZERO; 4], vec![0, 1, 2, 0, 2, 3], "Tilted").unwrap();
+    let mut s = settings(32, &[BakedMap::Normal]);
+    s.cage = CageSettings { max_frontal: 1.0, max_rear: 1.0, relative_to_bounding_box: false, ..s.cage };
+    let out = transfer(&low, &high, None, &s).unwrap();
+    let g = UvGBuffer::new(&low, 0, 32, 32);
+    let mut texels = 0;
+    for i in (0..32 * 32).filter(|i| g.covered(*i)) {
+        let baked = Vec3::from_slice(&out.maps[&BakedMap::Normal][i * 3..i * 3 + 3]) * 2.0 - Vec3::ONE;
+        let shown = viewport_normal(&low, g.tri[i], g.bary[i], baked);
+        let degrees = shown.dot(tilt).clamp(-1.0, 1.0).acos().to_degrees();
+        assert!(degrees < 0.1, "texel {i} of triangle {} decodes {degrees}° off", g.tri[i]);
+        texels += 1;
+    }
+    assert!(texels > 300, "{texels} texels covered");
+}
+
 #[test]
 fn bent_normals_point_away_from_occluders() {
     let mut m = quad();

@@ -170,6 +170,17 @@ impl Mesh {
     }
 
     /// MikkTSpace tangents (falls back to per-triangle tangents if generation fails).
+    ///
+    /// MikkTSpace gives every triangle corner its own tangent frame. A vertex whose corners get
+    /// different frames (where mirrored UVs meet) is split into one vertex per frame, as
+    /// MikkTSpace expects, so the corners of every triangle agree on the bitangent sign: the bake
+    /// takes a triangle's sign from its first corner and the viewport interpolates it, and they
+    /// then build the same frame. Copies keep the vertex's position, normal, UV and color, so
+    /// nothing but the vertex count changes.
+    ///
+    /// A zero-area triangle can still get corners of both signs: a vertex no other triangle
+    /// uses gets MikkTSpace's fallback frame (w = −1), e.g. at a UV sphere's pole on the seam.
+    /// Such corners take the sign of the triangle's first corner.
     pub fn compute_tangents(&mut self) {
         self.tangents = vec![Vec4::new(1.0, 0.0, 0.0, 1.0); self.positions.len()];
         if self.normals.len() != self.positions.len() {
@@ -180,8 +191,16 @@ impl Mesh {
         }
         // mikktspace crashes (out-of-bounds) when every triangle is degenerate; skip it then.
         let usable = !crate::unwrap::all_triangles_degenerate(self);
-        let mut g = Mikk { mesh: self };
-        if !usable || !mikktspace::generate_tangents(&mut g) {
+        let mut g = Mikk { mesh: self, corners: vec![None; self.indices.len()] };
+        if usable && mikktspace::generate_tangents(&mut g) {
+            let mut corners = g.corners;
+            for triangle in corners.chunks_exact_mut(3) {
+                if let Some(Some(first)) = triangle.first().copied() {
+                    triangle.iter_mut().flatten().for_each(|t| t.w = first.w);
+                }
+            }
+            self.split_by_corner_tangents(&corners);
+        } else {
             self.simple_tangents();
         }
         for (t, n) in self.tangents.iter_mut().zip(&self.normals) {
@@ -189,6 +208,32 @@ impl Mesh {
             let v = t.truncate();
             let o = (v - *n * n.dot(v)).try_normalize().unwrap_or_else(|| n.any_orthonormal_vector());
             *t = o.extend(if t.w < 0.0 { -1.0 } else { 1.0 });
+        }
+    }
+
+    /// Give every index its corner's tangent: the first corner of a vertex sets its tangent,
+    /// and each further distinct tangent gets a copy of the vertex. Corners without a tangent
+    /// keep their vertex.
+    fn split_by_corner_tangents(&mut self, corners: &[Option<Vec4>]) {
+        let mut first: Vec<Option<Vec4>> = vec![None; self.positions.len()];
+        let mut copies: std::collections::HashMap<(u32, [u32; 4]), u32> = std::collections::HashMap::new();
+        for (k, tangent) in corners.iter().enumerate() {
+            let (Some(tangent), Some(&v)) = (tangent, self.indices.get(k)) else { continue };
+            let Some(seen) = first.get_mut(v as usize) else { continue };
+            let vertex = match seen {
+                None => {
+                    *seen = Some(*tangent);
+                    v
+                }
+                Some(t) if t.to_array().map(f32::to_bits) == tangent.to_array().map(f32::to_bits) => continue,
+                Some(_) => *copies.entry((v, tangent.to_array().map(f32::to_bits))).or_insert_with(|| self.duplicate_vertex(v as usize)),
+            };
+            if let Some(t) = self.tangents.get_mut(vertex as usize) {
+                *t = *tangent;
+            }
+            if let Some(i) = self.indices.get_mut(k) {
+                *i = vertex;
+            }
         }
     }
 
@@ -350,8 +395,10 @@ impl Mesh {
     }
 }
 
+/// MikkTSpace's view of a mesh; it writes each triangle corner's tangent to `corners`.
 struct Mikk<'a> {
-    mesh: &'a mut Mesh,
+    mesh: &'a Mesh,
+    corners: Vec<Option<Vec4>>,
 }
 
 impl Mikk<'_> {
@@ -380,9 +427,8 @@ impl mikktspace::Geometry for Mikk<'_> {
         [uv.x, 1.0 - uv.y]
     }
     fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
-        let i = self.vi(face, vert);
-        if let Some(t) = self.mesh.tangents.get_mut(i) {
-            *t = Vec4::from_array(tangent);
+        if let Some(t) = face.checked_mul(3).and_then(|k| k.checked_add(vert)).and_then(|k| self.corners.get_mut(k)) {
+            *t = Some(Vec4::from_array(tangent));
         }
     }
 }
@@ -413,6 +459,68 @@ mod tests {
         }
         assert_eq!(m.material_of(1), Some(0));
         assert_eq!(m.triangles_of(0).collect::<Vec<_>>(), vec![0, 1]);
+    }
+
+    /// Two triangles in the plane y = 0 that share only their apex at the origin, the second
+    /// with its UVs mirrored in v: MikkTSpace gives the apex a frame with w = +1 in one and
+    /// w = −1 in the other.
+    fn bowtie() -> Mesh {
+        let positions = [Vec3::ZERO, Vec3::new(-1.0, 0.0, -1.0), Vec3::new(-1.0, 0.0, 1.0), Vec3::new(1.0, 0.0, -1.0), Vec3::new(1.0, 0.0, 1.0)];
+        let uvs = positions.map(|p| Vec2::new(0.5 + 0.5 * p.x, 0.5 + 0.5 * p.z * if p.x > 0.0 { -1.0 } else { 1.0 }));
+        Mesh::from_parts(positions.to_vec(), Some(vec![Vec3::Y; 5]), uvs.to_vec(), vec![0, 1, 2, 0, 4, 3], "Bowtie").unwrap()
+    }
+
+    /// `mesh` with every vertex merged into the first one with the same position, normal and UV:
+    /// the layout before tangents split any vertex.
+    fn welded(mesh: &Mesh) -> Mesh {
+        let key = |v: usize| [mesh.positions[v].to_array(), mesh.normals[v].to_array(), [mesh.uvs[v].x, mesh.uvs[v].y, 0.0]].map(|a| a.map(f32::to_bits));
+        let mut first = std::collections::HashMap::new();
+        let indices = mesh.indices.iter().map(|v| *first.entry(key(*v as usize)).or_insert(*v)).collect();
+        Mesh { indices, ..mesh.clone() }
+    }
+
+    /// MikkTSpace's tangent for every triangle corner of `mesh`
+    fn mikktspace_corners(mesh: &Mesh) -> Vec<Vec4> {
+        let mut g = Mikk { mesh, corners: vec![None; mesh.indices.len()] };
+        assert!(mikktspace::generate_tangents(&mut g));
+        g.corners.into_iter().map(Option::unwrap).collect()
+    }
+
+    #[test]
+    fn every_triangle_corner_keeps_its_mikktspace_frame() {
+        for (name, split) in [("bowtie", bowtie()), ("UV sphere", crate::primitives::sphere(1.0, 32, 16))] {
+            let unsplit = welded(&split);
+            let corners = mikktspace_corners(&unsplit);
+            let shared = || unsplit.indices.iter().zip(&corners);
+            let vertex_needs_two_signs = shared().any(|(v, t)| shared().any(|(u, s)| u == v && s.w != t.w));
+            let triangle_mixes_signs = corners.chunks_exact(3).any(|c| c.iter().any(|t| t.w != c[0].w));
+            assert!(vertex_needs_two_signs || triangle_mixes_signs, "{name}: one tangent per vertex would mix signs in a triangle");
+            let mut m = unsplit.clone();
+            m.compute_tangents();
+            m.validate().unwrap();
+            for (t, (tri, wanted)) in m.indices.chunks_exact(3).zip(corners.chunks_exact(3)).enumerate() {
+                let w = tri.iter().map(|v| m.tangents[*v as usize].w).collect::<Vec<_>>();
+                assert!(w.iter().all(|sign| Some(sign) == w.first()), "{name}: triangle {t} mixes bitangent signs {w:?}");
+                let [a, b, c] = unsplit.tri(t).unwrap().map(|v| unsplit.positions[v]);
+                let zero_area = (b - a).cross(c - a).length() < 1e-12;
+                for (k, (corner, wanted)) in tri.iter().zip(wanted).enumerate() {
+                    let (v, old) = (*corner as usize, unsplit.indices[t * 3 + k] as usize);
+                    assert_eq!(
+                        (m.positions[v], m.normals[v], m.uvs[v]),
+                        (unsplit.positions[old], unsplit.normals[old], unsplit.uvs[old]),
+                        "{name}: corner moved"
+                    );
+                    let tangent = m.tangents[v];
+                    assert!((tangent.truncate() - wanted.truncate().normalize()).length() < 1e-4, "{name}: tangent {tangent} is not MikkTSpace's {wanted}");
+                    assert!(zero_area || tangent.w == wanted.w, "{name}: triangle {t} has the bitangent sign of another triangle");
+                }
+            }
+        }
+        let m = bowtie();
+        assert_eq!(m.vertex_count(), 6, "the apex is split, nothing else");
+        let mut again = m.clone();
+        again.compute_tangents();
+        assert_eq!(again, m, "a mesh already split splits no further");
     }
 
     #[test]
