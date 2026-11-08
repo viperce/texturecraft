@@ -161,6 +161,19 @@ fn shape(pr: &Procedural, v: f32) -> f32 {
     if pr.invert { 1.0 - v } else { v }
 }
 
+/// Triplanar blend weights for a normal, summing to 1. The normal is divided by its largest
+/// component before sharpening, so the biggest weight is exactly 1 and the sum cannot underflow at
+/// high sharpness. Zero or non-finite normals give all-zero weights.
+fn triplanar_weights(nrm: Vec3, sharpness: f32) -> Vec3 {
+    let a = nrm.abs();
+    let m = a.max_element();
+    if !(a.is_finite() && m > 0.0) {
+        return Vec3::ZERO;
+    }
+    let w = (a / m).powf(sharpness.max(1.0));
+    w / (w.x + w.y + w.z)
+}
+
 /// Evaluate a procedural through a projection.
 pub fn procedural(pr: &Procedural, proj: &Projection, c: &Coords) -> f32 {
     let s = pr.scale.max(1e-4);
@@ -173,8 +186,7 @@ pub fn procedural(pr: &Procedural, proj: &Projection, c: &Coords) -> f32 {
         }
         Projection::Triplanar { scale, sharpness, offset } => {
             let p = c.pos * *scale * s + Vec3::from(*offset);
-            let w = c.nrm.abs().powf(sharpness.max(1.0));
-            let w = w / (w.x + w.y + w.z).max(1e-6);
+            let w = triplanar_weights(c.nrm, *sharpness);
             raw(pr.kind, Vec3::new(p.z, p.y, 0.0), pr.seed) * w.x
                 + raw(pr.kind, Vec3::new(p.x, p.z, 0.0), pr.seed) * w.y
                 + raw(pr.kind, Vec3::new(p.x, p.y, 0.0), pr.seed) * w.z
@@ -222,8 +234,7 @@ pub fn image_samples(proj: &Projection, c: &Coords) -> [(Vec2, f32); 3] {
         }
         Projection::Triplanar { scale, sharpness, offset } => {
             let p = c.pos * *scale + Vec3::from(*offset);
-            let w = c.nrm.abs().powf(sharpness.max(1.0));
-            let w = w / (w.x + w.y + w.z).max(1e-6);
+            let w = triplanar_weights(c.nrm, *sharpness);
             [(Vec2::new(p.z, -p.y), w.x), (Vec2::new(p.x, p.z), w.y), (Vec2::new(p.x, -p.y), w.z)]
         }
         Projection::Planar { scale, axis, offset } => {
@@ -369,6 +380,31 @@ mod tests {
         }
         // A plain weave shows every top thread alike.
         assert!((0..8).all(|x| at(ProceduralKind::Weave, x, 0) > 0.7));
+    }
+
+    #[test]
+    fn triplanar_weights_stay_normalized_at_high_sharpness() {
+        let pr = Procedural::new(ProceduralKind::Checker);
+        let normals = [Vec3::ONE.normalize(), Vec3::new(1.0, 1.0, 0.9).normalize(), Vec3::new(-0.9, 1.0, -1.0).normalize()];
+        for nrm in normals {
+            for sharpness in [26.0, 27.0, 28.0, 30.0, 47.0, 64.0] {
+                let proj = Projection::Triplanar { scale: 1.0, sharpness, offset: [0.0; 3] };
+                let c = Coords { uv: Vec2::ZERO, pos: Vec3::ZERO, nrm };
+                let sum: f32 = image_samples(&proj, &c).iter().map(|(_, w)| w * 1.0).sum();
+                assert!((sum - 1.0).abs() < 1e-4, "{nrm} at {sharpness}: weights sum to {sum}");
+                let v = procedural(&pr, &proj, &c);
+                assert!((v - 1.0).abs() < 1e-4, "{nrm} at {sharpness}: checker is {v}");
+            }
+        }
+        // Degenerate normals stay finite.
+        for nrm in [Vec3::ZERO, Vec3::NAN, Vec3::INFINITY, Vec3::new(f32::INFINITY, 1.0, 0.0), Vec3::new(f32::NAN, 1.0, 0.0)] {
+            for sharpness in [1.0, 64.0] {
+                let proj = Projection::Triplanar { scale: 1.0, sharpness, offset: [0.0; 3] };
+                let c = Coords { uv: Vec2::ZERO, pos: Vec3::ZERO, nrm };
+                assert!(image_samples(&proj, &c).iter().all(|(_, w)| w.is_finite()), "{nrm}");
+                assert!(procedural(&pr, &proj, &c).is_finite(), "{nrm}");
+            }
+        }
     }
 
     #[test]
