@@ -504,3 +504,13 @@ fn ply_face_element_before_vertex_element() {
     let bad = format!("{head}3 0 1 5\n0 0 0\n1 0 0\n0 1 0\n");
     assert!(import_mesh_bytes("a.ply", bad.as_bytes()).is_err());
 }
+
+#[test]
+fn utf8_bom_text_meshes_import() {
+    let stl = b"\xEF\xBB\xBFsolid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid t\n";
+    let obj = "\u{feff}v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    for (name, bytes) in [("a.stl", stl.as_slice()), ("a.obj", obj.as_bytes())] {
+        let r = import_mesh_bytes(name, bytes);
+        assert!(r.is_ok(), "{name}: {:?}", r.err());
+    }
+}

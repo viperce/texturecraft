@@ -10,11 +10,12 @@ const KIND: &str = "STL";
 pub(crate) fn read(bytes: &[u8]) -> Result<RawMesh> {
     let count = bytes.get(80..84).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
     let binary_len = count.and_then(|c| c.checked_mul(50)).and_then(|n| n.checked_add(84));
-    let looks_ascii = bytes.iter().position(|b| !b.is_ascii_whitespace()).and_then(|i| bytes.get(i..i + 5)) == Some(b"solid".as_slice());
+    let text = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let looks_ascii = text.iter().position(|b| !b.is_ascii_whitespace()).and_then(|i| text.get(i..i + 5)) == Some(b"solid".as_slice());
     let tris = match (count, binary_len) {
         // Exact size wins: many binary files also start with "solid".
         (Some(c), Some(len)) if len == bytes.len() => binary(bytes, c)?,
-        _ if looks_ascii => ascii(bytes)?,
+        _ if looks_ascii => ascii(text)?,
         (Some(c), Some(len)) if len < bytes.len() => binary(bytes, c)?,
         _ => return Err(malformed(KIND, "neither a complete binary STL nor an ascii STL")),
     };

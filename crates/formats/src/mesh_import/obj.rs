@@ -13,6 +13,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<RawMesh> {
 
 fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
     let text = String::from_utf8_lossy(bytes);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     // Material names come from `usemtl` (MTL files are never read): tobj only assigns a face's
     // material when a library defines it, so every library request gets a synthetic one.
     let mut names: Vec<&str> = Vec::new();
