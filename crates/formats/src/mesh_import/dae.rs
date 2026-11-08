@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::XmlVersion;
+use quick_xml::escape::resolve_predefined_entity;
+use quick_xml::events::{BytesRef, BytesStart, Event};
 use texturecraft_geom::glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 
 use super::{Corner, PolygonSink, RawCamera, RawMesh, check_vertices};
@@ -52,7 +54,9 @@ impl El {
 
 fn element(e: &BytesStart) -> El {
     let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-    let attrs = e.attributes().with_checks(false).flatten().map(|a| (text(a.key.local_name().as_ref()), text(&a.value))).collect();
+    // Values come back still escaped; decode them, keeping the raw text if they are malformed.
+    let value = |a: &quick_xml::events::attributes::Attribute| a.normalized_value(XmlVersion::Implicit1_0).map_or_else(|_| text(&a.value), |v| v.into_owned());
+    let attrs = e.attributes().with_checks(false).flatten().map(|a| (text(a.key.local_name().as_ref()), value(&a))).collect();
     El { name: text(e.local_name().as_ref()), attrs, ..El::default() }
 }
 
@@ -61,8 +65,11 @@ fn parse_xml(bytes: &[u8]) -> Result<El> {
     let mut reader = quick_xml::Reader::from_reader(bytes);
     let mut stack = vec![El::default()];
     let mut count = 0usize;
+    // Text and entity references arrive as separate events but form one run of text.
+    let mut in_text = false;
     loop {
         let event = reader.read_event().map_err(|e| malformed(KIND, e))?;
+        let glue = std::mem::replace(&mut in_text, matches!(event, Event::Text(_) | Event::GeneralRef(_)));
         if matches!(event, Event::Start(_) | Event::Empty(_)) {
             count += 1;
             if count > MAX_ELEMENTS || stack.len() > MAX_DEPTH {
@@ -82,8 +89,9 @@ fn parse_xml(bytes: &[u8]) -> Result<El> {
                     parent.children.push(el);
                 }
             }
-            Event::Text(t) => push_text(&mut stack, &t),
-            Event::CData(t) => push_text(&mut stack, &t),
+            Event::Text(t) => push_text(&mut stack, &String::from_utf8_lossy(&t), glue),
+            Event::GeneralRef(r) => push_text(&mut stack, &entity(&r), glue),
+            Event::CData(t) => push_text(&mut stack, &String::from_utf8_lossy(&t), false),
             Event::Eof => break,
             _ => {}
         }
@@ -94,9 +102,22 @@ fn parse_xml(bytes: &[u8]) -> Result<El> {
     }
 }
 
-fn push_text(stack: &mut [El], t: &[u8]) {
+/// The text an entity or character reference stands for (unknown ones stay as written).
+fn entity(r: &BytesRef) -> String {
+    let name = String::from_utf8_lossy(r);
+    match r.resolve_char_ref() {
+        Ok(Some(c)) => c.to_string(),
+        _ => resolve_predefined_entity(&name).map_or_else(|| format!("&{name};"), str::to_string),
+    }
+}
+
+/// Appends a text piece; `glue` joins it to the previous piece of the same run of text.
+fn push_text(stack: &mut [El], t: &str, glue: bool) {
     if let Some(el) = stack.last_mut() {
-        el.text.push_str(&String::from_utf8_lossy(t));
+        if glue && el.text.ends_with(' ') {
+            el.text.pop();
+        }
+        el.text.push_str(t);
         // Whitespace keeps numbers split across text events apart.
         el.text.push(' ');
     }

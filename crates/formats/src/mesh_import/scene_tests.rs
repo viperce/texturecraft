@@ -728,6 +728,24 @@ fn dae_polylist_z_up_units_and_node_transforms() {
 }
 
 #[test]
+fn dae_attribute_and_text_entities_are_decoded() {
+    let dae = DAE
+        .replace(r#"<node id="other">"#, r#"<node id="other" name="Tom &amp; Jerry &lt;&quot;&apos;&#65;&#x42;">"#)
+        .replace(r#"name="Red""#, r#"name="R&amp;D""#)
+        .replace(r#"<geometry id="quad""#, r#"<geometry id="q&amp;d""#)
+        .replace(r##"url="#quad""##, r##"url="#q&#38;d""##)
+        .replace("<yfov>30</yfov>", "<yfov>3&#48;</yfov>");
+    let r = import_mesh_bytes("scene.dae", dae.as_bytes()).unwrap();
+    let m = &r.mesh;
+    let parts: Vec<&str> = m.submeshes.iter().map(|s| s.name.as_str()).collect();
+    assert!(parts.contains(&"Tom & Jerry <\"'AB"), "{parts:?}");
+    assert_eq!(m.materials, vec!["R&D".to_string(), "Blue".to_string()]);
+    assert_eq!(m.triangle_count(), 2 + 1 + 2);
+    let [cam] = r.cameras.as_slice() else { panic!("{:?}", r.cameras) };
+    assert!((cam.fov - 30.0).abs() < 1e-3, "{cam:?}");
+}
+
+#[test]
 fn glb_export_round_trips_with_textures() {
     let mesh = texturecraft_geom::primitives::material_ball();
     let png = |color: image::ColorType| {
