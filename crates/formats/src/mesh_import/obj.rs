@@ -13,6 +13,8 @@ pub(crate) fn read(bytes: &[u8]) -> Result<RawMesh> {
 
 fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
     let text = String::from_utf8_lossy(bytes);
+    let filled = fill_missing_vt(&text);
+    let text = filled.as_deref().unwrap_or(&text);
     // Material names come from `usemtl` (MTL files are never read): tobj only assigns a face's
     // material when a library defines it, so every library request gets a synthetic one.
     let mut names: Vec<&str> = Vec::new();
@@ -34,6 +36,9 @@ fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
     let materials = materials.unwrap_or_default();
 
     let mut raw = RawMesh::default();
+    if filled.is_some() {
+        raw.warnings.push("some faces have no UVs; their corners were placed at UV (0, 0)".into());
+    }
     let (mut normals, mut uvs, mut colors) = (Some(Vec::new()), Some(Vec::new()), Vec::new());
     let mut partial_uvs = false;
     for model in &models {
@@ -93,4 +98,54 @@ fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
     raw.uvs = uvs;
     raw.colors = models.iter().any(|m| !m.mesh.vertex_color.is_empty()).then_some(colors);
     Ok(raw)
+}
+
+/// tobj drops the UV of a corner without `vt`, which misaligns the object's UVs. When a file has
+/// UVs but some face corners lack one, a `vt 0 0` is put first (positive vt indices shift by one;
+/// negative ones stay relative) and those corners point at it. `None` when nothing is missing.
+fn fill_missing_vt(text: &str) -> Option<String> {
+    let face = |line: &str| line.split_whitespace().next() == Some("f");
+    // An inline `# comment` ends the corner list; its words are not corners.
+    fn corners(line: &str) -> impl Iterator<Item = &str> {
+        line.split_once('#').map_or(line, |(body, _)| body).split_whitespace().skip(1)
+    }
+    let has_vt = text.lines().any(|l| l.split_whitespace().next() == Some("vt"));
+    let missing = || text.lines().filter(|l| face(l)).flat_map(corners).any(|t| t.split('/').nth(1).is_none_or(str::is_empty));
+    if !has_vt || !missing() {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len() + text.len() / 8 + 8);
+    out.push_str("vt 0 0\n");
+    for line in text.lines() {
+        if !face(line) {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        out.push('f');
+        for token in corners(line) {
+            let mut parts = token.splitn(3, '/');
+            let (v, vt, vn) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default(), parts.next());
+            let vt = match vt.parse::<i64>() {
+                Ok(i) if i > 0 => i.saturating_add(1).to_string(),
+                _ if vt.is_empty() => "1".to_string(),
+                _ => vt.to_string(),
+            };
+            out.push(' ');
+            out.push_str(v);
+            out.push('/');
+            out.push_str(&vt);
+            if let Some(vn) = vn {
+                out.push('/');
+                out.push_str(vn);
+            }
+        }
+        // tobj rejects words after the corners, so the comment moves to its own line.
+        if let Some((_, comment)) = line.split_once('#') {
+            out.push_str("\n#");
+            out.push_str(comment);
+        }
+        out.push('\n');
+    }
+    Some(out)
 }

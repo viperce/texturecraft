@@ -236,6 +236,41 @@ fn obj_without_uvs_or_normals_is_completed() {
 }
 
 #[test]
+fn obj_faces_without_vt_keep_the_file_uvs() {
+    // One face uses the file's UVs, one (in another group) has none: the file UVs must survive.
+    let obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nvt 0.25 0.5\nvt 0.75 0.5\nvt 0.25 1\nvn 0 0 1\n\
+               g a\nf 1/1/1 2/2/1 3/3/1\ng b\nf 2//1 4//1 3//1\nvt 0.5 0.5\ng c\nf 1/-1 2/4 3/-1\n";
+    let im = import_mesh_bytes("t.obj", obj.as_bytes()).unwrap();
+    assert!(!im.report.uvs_generated, "{:?}", im.report.warnings);
+    let m = &im.mesh;
+    let uvs_at = |p: Vec3| -> Vec<Vec2> { m.positions.iter().zip(&m.uvs).filter(|(q, _)| **q == p).map(|(_, uv)| *uv).collect() };
+    assert!(uvs_at(Vec3::ZERO).contains(&Vec2::new(0.25, 0.5)));
+    assert!(uvs_at(Vec3::X).contains(&Vec2::new(0.75, 0.5)));
+    assert!(uvs_at(Vec3::Y).contains(&Vec2::new(0.25, 0.0)));
+    // Group c references the vt defined after group b, relatively and absolutely.
+    assert!(uvs_at(Vec3::ZERO).contains(&Vec2::new(0.5, 0.5)));
+    assert!(uvs_at(Vec3::X).contains(&Vec2::new(0.5, 0.5)));
+    assert!(im.report.warnings.iter().any(|w| w.contains("no UVs")));
+    m.validate().unwrap();
+}
+
+#[test]
+fn obj_face_comments_are_not_read_as_corners() {
+    // A trailing comment on a face without vt must not become a corner.
+    let obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nvt 0.25 0.5\nvt 0.75 0.5\nvt 0.25 1\n\
+               f 1/1 2/2 3/3 # uses the file UVs\nf 2 4 3 # no vt here\n";
+    let im = import_mesh_bytes("t.obj", obj.as_bytes()).unwrap();
+    assert!(!im.report.uvs_generated, "{:?}", im.report.warnings);
+    let m = &im.mesh;
+    assert_eq!(m.positions.len(), 6);
+    let uvs_at = |p: Vec3| -> Vec<Vec2> { m.positions.iter().zip(&m.uvs).filter(|(q, _)| **q == p).map(|(_, uv)| *uv).collect() };
+    assert!(uvs_at(Vec3::ZERO).contains(&Vec2::new(0.25, 0.5)));
+    assert!(uvs_at(Vec3::X).contains(&Vec2::new(0.75, 0.5)));
+    assert!(uvs_at(Vec3::Y).contains(&Vec2::new(0.25, 0.0)));
+    m.validate().unwrap();
+}
+
+#[test]
 fn polygons_keep_their_edges_for_the_wireframe() {
     // An OBJ quad and pentagon (with UVs, so no unwrap splits them), a triangle, and a PLY quad.
     let obj = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 2 0 0\nv 3 0 0\nv 3 1 0\nv 2.5 2 0\nv 2 1 0\nvt 0 0\n\
