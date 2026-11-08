@@ -504,3 +504,10 @@ fn ply_face_element_before_vertex_element() {
     let bad = format!("{head}3 0 1 5\n0 0 0\n1 0 0\n0 1 0\n");
     assert!(import_mesh_bytes("a.ply", bad.as_bytes()).is_err());
 }
+
+#[test]
+fn obj_usemtl_accepts_tab_separator() {
+    let im = import_mesh_bytes("a.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nusemtl\tA\nf 1 2 3\nusemtl B\nf 2 4 3\n").unwrap();
+    assert_eq!(im.mesh.materials, vec!["A".to_string(), "B".to_string()]);
+    assert_eq!(im.mesh.submeshes.iter().map(|s| s.count / 3).collect::<Vec<_>>(), vec![1, 1]);
+}

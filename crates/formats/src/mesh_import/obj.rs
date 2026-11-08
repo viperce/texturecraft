@@ -18,7 +18,7 @@ fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
     let mut names: Vec<&str> = Vec::new();
     for line in text.lines().map(str::trim) {
         if line.split_whitespace().next() == Some("usemtl")
-            && let Some((_, name)) = line.split_once(' ')
+            && let Some((_, name)) = line.split_once(char::is_whitespace)
             && !name.trim().is_empty()
             && !names.contains(&name.trim())
         {
@@ -26,7 +26,15 @@ fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
         }
     }
     let library: String = names.iter().map(|n| format!("newmtl {n}\n")).collect();
-    let source = format!("mtllib texturecraft-usemtl.mtl\n{text}");
+    // tobj only splits `usemtl` on a space, so tab-separated lines are rewritten to the canonical form.
+    let mut source = String::from("mtllib texturecraft-usemtl.mtl\n");
+    for line in text.lines() {
+        match line.trim().split_once(char::is_whitespace) {
+            Some(("usemtl", name)) => source.push_str(&format!("usemtl {}", name.trim())),
+            _ => source.push_str(line),
+        }
+        source.push('\n');
+    }
     // Polygons stay whole so the wireframe can show them; `RawMesh::polygon` triangulates.
     let opts = tobj::LoadOptions { single_index: true, triangulate: false, ignore_points: true, ignore_lines: true };
     let (models, materials) =
