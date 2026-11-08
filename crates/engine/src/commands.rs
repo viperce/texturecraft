@@ -152,6 +152,10 @@ pub(crate) fn strp<'a>(p: &'a Value, key: &str) -> Option<&'a str> {
 
 /// A layer id param (`"layer"`), defaulting to the selected layer.
 pub(crate) fn layer_param(s: &Session, cmd: &str, p: &Value) -> Result<texturecraft_core::LayerId> {
+    let given = p.get("layer").filter(|v| !v.is_null());
+    if given.is_some() && u64p(p, "layer").is_none() {
+        return Err(bad(cmd, format!("invalid layer id {}", given.map_or_else(String::new, ToString::to_string))));
+    }
     match u64p(p, "layer") {
         Some(id) => {
             let id = texturecraft_core::LayerId(id);
