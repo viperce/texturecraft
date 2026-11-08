@@ -179,7 +179,7 @@ pub struct Permit(Arc<AtomicUsize>);
 
 impl ConnectionLimiter {
     pub fn try_acquire(&self, max: usize) -> Option<Permit> {
-        self.0.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < max).then_some(n + 1)).ok().map(|_| Permit(self.0.clone()))
+        self.0.try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < max).then_some(n + 1)).ok().map(|_| Permit(self.0.clone()))
     }
 }
 

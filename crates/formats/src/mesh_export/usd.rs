@@ -184,7 +184,7 @@ fn scene(mesh: &Mesh, name: &str, files: &[Vec<(usize, String)>]) -> Result<UsdL
     let mut faces_of: Vec<Vec<i32>> = vec![Vec::new(); mesh.materials.len()];
     for sm in parts(mesh, name) {
         let range = mesh.indices.get(sm.start as usize..(sm.start as usize).saturating_add(sm.count as usize)).unwrap_or_default();
-        for t in range.chunks_exact(3) {
+        for t in range.as_chunks::<3>().0 {
             if let Some(f) = faces_of.get_mut(sm.material) {
                 f.push(i32::try_from(tris.len() / 3).map_err(|_| FormatError::TooLarge("triangle count".into()))?);
             }

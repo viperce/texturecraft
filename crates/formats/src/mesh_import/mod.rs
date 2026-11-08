@@ -403,7 +403,7 @@ fn geometry(raw: RawMesh) -> Result<(Mesh, Vec<String>, Option<Vec<Vec2>>)> {
     }
     if !diagonals.is_empty() {
         let diagonal = |a: u32, b: u32| diagonals.contains(&(a.min(b), a.max(b)));
-        mesh.diagonals = mesh.indices.chunks_exact(3).map(|t| (0..3).map(|i| u8::from(diagonal(t[i], t[(i + 1) % 3])) << i).sum()).collect();
+        mesh.diagonals = mesh.indices.as_chunks::<3>().0.iter().map(|t| (0..3).map(|i| u8::from(diagonal(t[i], t[(i + 1) % 3])) << i).sum()).collect();
     }
     if let Some(bad) = mesh.indices.iter().find(|i| **i as usize >= mesh.positions.len()) {
         return Err(FormatError::Invalid(format!("vertex index {bad} out of range ({} vertices)", mesh.positions.len())));
@@ -484,7 +484,7 @@ fn orbit_cameras(raw: &[RawCamera], mesh: &Mesh) -> Vec<texturecraft_core::Camer
 fn smooth_normals(mesh: &Mesh) -> Vec<Vec3> {
     let weld = weld_ids(&mesh.positions);
     let mut acc = vec![Vec3::ZERO; mesh.positions.len()];
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         let p = |i: u32| mesh.positions.get(i as usize).copied().unwrap_or_default();
         let face = (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0]));
         for v in t {

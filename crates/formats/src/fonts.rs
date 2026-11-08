@@ -91,7 +91,7 @@ pub fn faces_of(path: &Path) -> std::io::Result<Vec<FontFace>> {
     for (index, offset) in offsets.into_iter().enumerate() {
         let dir = at(offset, 12)?;
         let tables = at(offset + 12, 16 * usize::from(u16_at(&dir, 4).unwrap_or(0)))?;
-        let Some(rec) = tables.chunks_exact(16).find(|r| r.get(..4) == Some(b"name")) else { continue };
+        let Some(rec) = tables.as_chunks::<16>().0.iter().find(|r| r.get(..4) == Some(b"name")) else { continue };
         let (Some(off), Some(len)) = (u32_at(rec, 8), u32_at(rec, 12)) else { continue };
         let names = at(u64::from(off), len.min(MAX_NAME_TABLE) as usize)?;
         let name = |ids: [u16; 2]| ids.iter().find_map(|id| name_string(&names, *id));
@@ -125,7 +125,7 @@ fn name_string(t: &[u8], id: u16) -> Option<String> {
         }
         let (rank, s) = match platform {
             3 | 0 => {
-                let s = String::from_utf16_lossy(&bytes.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect::<Vec<_>>());
+                let s = String::from_utf16_lossy(&bytes.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes([c[0], c[1]])).collect::<Vec<_>>());
                 (if language == 0x409 { 0 } else { 1 }, s)
             }
             1 => (if language == 0 { 2 } else { 3 }, bytes.iter().map(|b| char::from(*b)).collect()),

@@ -71,7 +71,7 @@ pub(crate) fn subdivide(verts: &[Vertex], indices: &[u32], draws: &[Draw], level
     for &(start, count, material) in draws {
         let first = out_i.len() as u32;
         let tris = indices.get(start as usize..(start as usize).saturating_add(count as usize)).unwrap_or_default();
-        for t in tris.chunks_exact(3) {
+        for t in tris.as_chunks::<3>().0 {
             let (Some(a), Some(b), Some(c)) = (verts.get(t[0] as usize), verts.get(t[1] as usize), verts.get(t[2] as usize)) else { continue };
             let base = out_v.len() as u32;
             // Grid point (i, j), i + j <= n, row by row: row j holds n + 1 - j points. Points on
@@ -118,7 +118,7 @@ pub(crate) fn subdivide(verts: &[Vertex], indices: &[u32], draws: &[Draw], level
 /// far a height change moves the surface for the slope height-to-normal shows.
 pub(crate) fn world_per_uv(verts: &[Vertex], indices: &[u32]) -> Option<f32> {
     let (mut world, mut uv) = (0.0f64, 0.0f64);
-    for t in indices.chunks_exact(3) {
+    for t in indices.as_chunks::<3>().0 {
         let (Some(a), Some(b), Some(c)) = (verts.get(t[0] as usize), verts.get(t[1] as usize), verts.get(t[2] as usize)) else { continue };
         let d = |p: [f32; 3], q: [f32; 3]| [f64::from(q[0] - p[0]), f64::from(q[1] - p[1]), f64::from(q[2] - p[2])];
         let (e1, e2) = (d(a.pos, b.pos), d(a.pos, c.pos));

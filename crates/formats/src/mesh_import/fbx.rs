@@ -283,10 +283,10 @@ impl<'a> Binary<'a> {
             <[u8; N]>::try_from(c).unwrap_or([0; N])
         }
         Ok(match ty {
-            b'd' => raw.chunks_exact(8).map(|c| f64::from_le_bytes(le(c))).collect(),
-            b'l' => raw.chunks_exact(8).map(|c| i64::from_le_bytes(le(c)) as f64).collect(),
-            b'f' => raw.chunks_exact(4).map(|c| f32::from_le_bytes(le(c)) as f64).collect(),
-            b'i' => raw.chunks_exact(4).map(|c| i32::from_le_bytes(le(c)) as f64).collect(),
+            b'd' => raw.as_chunks::<8>().0.iter().map(|c| f64::from_le_bytes(le(c))).collect(),
+            b'l' => raw.as_chunks::<8>().0.iter().map(|c| i64::from_le_bytes(le(c)) as f64).collect(),
+            b'f' => raw.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(le(c)) as f64).collect(),
+            b'i' => raw.as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes(le(c)) as f64).collect(),
             _ => raw.iter().map(|b| *b as f64).collect(),
         })
     }
@@ -786,7 +786,7 @@ impl Layer<'_> {
 fn add_geometry(sink: &mut PolygonSink, g: &Node, m: Mat4, slots: &[String]) -> Result<()> {
     let verts = g.child("Vertices").map(Node::arr).unwrap_or_default();
     check_vertices(verts.len() / 3)?;
-    let points: Vec<Vec3> = verts.chunks_exact(3).map(|c| m.transform_point3(Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32))).collect();
+    let points: Vec<Vec3> = verts.as_chunks::<3>().0.iter().map(|c| m.transform_point3(Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32))).collect();
     let pvi = g.child("PolygonVertexIndex").map(Node::arr).unwrap_or_default();
     let normals = Layer::read(g, "LayerElementNormal", "Normals", "NormalsIndex");
     let uvs = Layer::read(g, "LayerElementUV", "UV", "UVIndex");

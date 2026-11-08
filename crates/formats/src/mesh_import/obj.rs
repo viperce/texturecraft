@@ -44,10 +44,10 @@ fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
         let arities: Vec<usize> = if m.face_arities.is_empty() { vec![3; m.indices.len() / 3] } else { m.face_arities.iter().map(|a| *a as usize).collect() };
         check_triangles(raw.triangle_count(), arities.iter().map(|a| a.saturating_sub(2)).sum())?;
         let base = raw.positions.len() as u32;
-        raw.positions.extend(m.positions.chunks_exact(3).map(|p| Vec3::new(p[0], p[1], p[2])));
+        raw.positions.extend(m.positions.as_chunks::<3>().0.iter().map(|p| Vec3::new(p[0], p[1], p[2])));
         if m.normals.len() == n * 3 {
             if let Some(v) = &mut normals {
-                v.extend(m.normals.chunks_exact(3).map(|p| Vec3::new(p[0], p[1], p[2])));
+                v.extend(m.normals.as_chunks::<3>().0.iter().map(|p| Vec3::new(p[0], p[1], p[2])));
             }
         } else {
             normals = None;
@@ -55,7 +55,7 @@ fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
         if m.texcoords.len() == n * 2 {
             if let Some(v) = &mut uvs {
                 // OBJ UVs have their origin bottom-left.
-                v.extend(m.texcoords.chunks_exact(2).map(|t| Vec2::new(t[0], 1.0 - t[1])));
+                v.extend(m.texcoords.as_chunks::<2>().0.iter().map(|t| Vec2::new(t[0], 1.0 - t[1])));
             }
         } else {
             partial_uvs |= n > 0 && !m.indices.is_empty();
@@ -63,7 +63,7 @@ fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
         }
         // `v x y z r g b`: objects without colors are white.
         match m.vertex_color.len() == n * 3 {
-            true => colors.extend(m.vertex_color.chunks_exact(3).map(|c| Vec4::new(c[0], c[1], c[2], 1.0))),
+            true => colors.extend(m.vertex_color.as_chunks::<3>().0.iter().map(|c| Vec4::new(c[0], c[1], c[2], 1.0))),
             false => colors.extend(std::iter::repeat_n(Vec4::ONE, n)),
         }
         let name = match m.material_id {

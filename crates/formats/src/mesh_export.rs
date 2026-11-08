@@ -93,7 +93,7 @@ fn obj_text(mesh: &Mesh, name: &str, mtllib: Option<&str>) -> String {
         let material = materials.get(sm.material).map_or("default", String::as_str);
         let _ = writeln!(s, "g {}\nusemtl {material}", token(&sm.name));
         let (a, b) = (sm.start as usize, sm.start as usize + sm.count as usize);
-        for tri in mesh.indices.get(a..b).unwrap_or_default().chunks_exact(3) {
+        for tri in mesh.indices.get(a..b).unwrap_or_default().as_chunks::<3>().0 {
             s.push('f');
             for i in tri {
                 let i = i + 1;

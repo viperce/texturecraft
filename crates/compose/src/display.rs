@@ -131,7 +131,7 @@ pub fn tile_bytes(comp: &Composite, baked: &BakedMaps, kind: DisplayKind, tx: u3
         }
         DisplayKind::Lobes => {
             let lanes = [Channel::CoatWeight, Channel::CoatRoughness, Channel::AnisotropyLevel, Channel::AnisotropyAngle].map(scalar8);
-            for (i, px) in out.chunks_exact_mut(4).enumerate() {
+            for (i, px) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 for (d, lane) in px.iter_mut().zip(&lanes) {
                     *d = lane(i);
                 }
@@ -143,7 +143,7 @@ pub fn tile_bytes(comp: &Composite, baked: &BakedMaps, kind: DisplayKind, tx: u3
             let snorm = |v: u16| (128.0 + 127.0 * (v as f32 / 65535.0 * 2.0 - 1.0)).round().clamp(0.0, 255.0) as u8;
             // A TILE never straddles two atlas blocks.
             let scale = (-32.0 * comp.block_scales.at(tx * TILE, ty * TILE).log2()).round().clamp(0.0, 255.0) as u8;
-            for (i, px) in out.chunks_exact_mut(4).enumerate() {
+            for (i, px) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 for (k, d) in px.iter_mut().take(2).enumerate() {
                     *d = n.and_then(|t| t.get(i * 3 + k)).map_or(128, |v| snorm(*v));
                 }

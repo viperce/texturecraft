@@ -92,7 +92,7 @@ fn open_quad_is_unoccluded() {
 #[test]
 fn inside_of_a_closed_box_is_occluded() {
     let mut m = primitives::cube(2.0);
-    for t in m.indices.chunks_exact_mut(3) {
+    for t in m.indices.as_chunks_mut::<3>().0.iter_mut() {
         t.swap(1, 2);
     }
     for n in &mut m.normals {

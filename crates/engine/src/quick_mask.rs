@@ -115,7 +115,7 @@ impl Session {
         let mut out = vec![255u8; size as usize * size as usize * 4];
         out.par_chunks_mut(size as usize * 4).enumerate().for_each(|(y, row)| {
             let ty = (y as u64 * u64::from(h) / u64::from(size)) as u32;
-            for (x, px) in row.chunks_exact_mut(4).enumerate() {
+            for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let tx = (x as u64 * u64::from(w) / u64::from(size)) as u32;
                 let mut m = from_u16(mask.get(tx, ty)[0]);
                 if let Some((alpha, opacity, erase)) = live {

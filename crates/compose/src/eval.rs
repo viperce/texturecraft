@@ -2126,7 +2126,7 @@ pub fn flatten_layer(inp: &Inputs, id: LayerId, tiles: &[(u32, u32)]) -> Option<
                 n.chans.iter().filter_map(|c| Channel::ALL.get(c.ch).map(|ch| (*ch, vec![0u16; TILE_AREA * (c.comps + 1)], false))).collect();
             for (ch, buf, _) in &mut bufs {
                 if ch.kind() == ChannelKind::Signed {
-                    for px in buf.chunks_exact_mut(2) {
+                    for px in buf.as_chunks_mut::<2>().0.iter_mut() {
                         px[0] = to_u16_signed(0.0);
                     }
                 }

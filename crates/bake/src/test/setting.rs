@@ -44,7 +44,7 @@ fn matching_skips_a_closer_unrelated_high_mesh_and_backfaces() {
     assert!((height(&parameters, &high) - 0.54).abs() < 1e-5);
     parameters.high_poly.match_mode = MeshMatchMode::ByMeshName;
     assert!((height(&parameters, &high) - 0.52).abs() < 1e-5);
-    for triangle in high.indices.chunks_exact_mut(3) {
+    for triangle in high.indices.as_chunks_mut::<3>().0 {
         triangle.swap(1, 2);
     }
     assert_eq!(height(&parameters, &high), 0.5);
@@ -164,7 +164,7 @@ fn position_axis_and_material_bounds_change_only_the_requested_space() {
     let local = run(&mesh, &parameters).unwrap();
     assert!(global.maps[&BakedMap::Position].iter().all(|value| *value < 0.2));
     assert!(local.maps[&BakedMap::Position].iter().any(|value| *value > 0.9));
-    assert!(local.maps[&BakedMap::Position].chunks_exact(3).all(|pixel| pixel[0] == pixel[1] && pixel[1] == pixel[2]));
+    assert!(local.maps[&BakedMap::Position].as_chunks::<3>().0.iter().all(|pixel| pixel[0] == pixel[1] && pixel[1] == pixel[2]));
 }
 
 #[test]

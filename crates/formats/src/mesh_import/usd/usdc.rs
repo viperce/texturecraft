@@ -134,7 +134,7 @@ fn is_quat(t: u8) -> bool {
 /// Quaternions are stored imaginary first; values keep USD's text order (real first).
 fn quat_order(t: u8, v: &mut [f64]) {
     if is_quat(t) {
-        for q in v.chunks_exact_mut(4) {
+        for q in v.as_chunks_mut::<4>().0 {
             q.rotate_right(1);
         }
     }
@@ -234,7 +234,7 @@ impl<'a> Crate<'a> {
         if reps.len() != n * 8 {
             return Err(malformed(KIND, "field values are truncated"));
         }
-        self.fields = tokens.iter().zip(reps.chunks_exact(8)).map(|(t, r)| (*t as u32, u64::from_le_bytes(r.try_into().unwrap_or_default()))).collect();
+        self.fields = tokens.iter().zip(reps.as_chunks::<8>().0.iter()).map(|(t, r)| (*t as u32, u64::from_le_bytes(*r))).collect();
         Ok(())
     }
 

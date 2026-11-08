@@ -156,8 +156,8 @@ impl Mesh {
     /// Area-weighted smooth normals over the index buffer.
     pub fn compute_normals(&mut self) {
         let mut n = vec![Vec3::ZERO; self.positions.len()];
-        for t in self.indices.chunks_exact(3) {
-            let (a, b, c) = (t[0] as usize, t[1] as usize, t[2] as usize);
+        for &[a, b, c] in self.indices.as_chunks::<3>().0 {
+            let (a, b, c) = (a as usize, b as usize, c as usize);
             let (Some(pa), Some(pb), Some(pc)) = (self.positions.get(a), self.positions.get(b), self.positions.get(c)) else { continue };
             let face = (*pb - *pa).cross(*pc - *pa);
             for v in [a, b, c] {
@@ -194,8 +194,8 @@ impl Mesh {
 
     fn simple_tangents(&mut self) {
         let mut acc = vec![Vec3::ZERO; self.positions.len()];
-        for t in self.indices.chunks_exact(3) {
-            let (a, b, c) = (t[0] as usize, t[1] as usize, t[2] as usize);
+        for &[a, b, c] in self.indices.as_chunks::<3>().0 {
+            let (a, b, c) = (a as usize, b as usize, c as usize);
             let (Some(pa), Some(pb), Some(pc)) = (self.positions.get(a), self.positions.get(b), self.positions.get(c)) else { continue };
             let (Some(ua), Some(ub), Some(uc)) = (self.uvs.get(a), self.uvs.get(b), self.uvs.get(c)) else { continue };
             let (e1, e2) = (*pb - *pa, *pc - *pa);
@@ -244,7 +244,7 @@ impl Mesh {
             }
         }
         let mut shared = vec![false; self.positions.len()];
-        for (_, tri) in self.indices.chunks_exact(3).enumerate().filter(|(t, _)| !is_mine.get(*t).copied().unwrap_or(false)) {
+        for (_, tri) in self.indices.as_chunks::<3>().0.iter().enumerate().filter(|(t, _)| !is_mine.get(*t).copied().unwrap_or(false)) {
             for v in tri {
                 if let Some(s) = shared.get_mut(*v as usize) {
                     *s = true;

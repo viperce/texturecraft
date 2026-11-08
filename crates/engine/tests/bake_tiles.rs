@@ -57,7 +57,7 @@ fn partial_bake_preserves_unchecked_tiles_and_uses_the_workers_selection() {
     session.apply_bake(0, output).unwrap();
 
     let pixels = &session.doc.baked[&0].maps[&BakedMap::AmbientOcclusion];
-    for row in pixels.chunks_exact(64) {
+    for row in pixels.as_chunks::<64>().0 {
         assert!(row[..32].iter().all(|value| *value > 0.99));
         assert!(row[32..].iter().all(|value| *value == 0.25));
     }
@@ -81,7 +81,7 @@ fn partial_bake_resizes_retained_tiles_and_unchecked_map_outputs() {
 
     let baked = &session.doc.baked[&0];
     assert_eq!((baked.resolution, baked.height(BakedMap::AmbientOcclusion)), (128, 64));
-    for row in baked.maps[&BakedMap::AmbientOcclusion].chunks_exact(128) {
+    for row in baked.maps[&BakedMap::AmbientOcclusion].as_chunks::<128>().0 {
         assert!(row[..64].iter().all(|value| *value > 0.99));
         assert!(row[64..].iter().all(|value| *value == 0.25));
     }

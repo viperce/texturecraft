@@ -17,7 +17,7 @@ fn obj(mesh: &Mesh, dy: f32, max_x: f32, rgb: [f32; 3]) -> String {
     for p in &mesh.positions {
         s += &format!("v {} {} {} {} {} {}\n", p.x.min(max_x), p.y + dy, p.z, rgb[0], rgb[1], rgb[2]);
     }
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         s += &format!("f {} {} {}\n", t[0] + 1, t[1] + 1, t[2] + 1);
     }
     s

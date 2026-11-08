@@ -169,7 +169,7 @@ fn add_primitive(raw: &mut RawMesh, attrs: &mut Attrs, prim: &gltf::Primitive, m
             attrs.uvs.extend((0..n).map(uv_of));
             attrs.colors.extend((0..n).map(color_of));
             let group = raw.group(&name, part);
-            for t in indices.chunks_exact(3) {
+            for t in indices.as_chunks::<3>().0 {
                 let (a, b, c) = (t[0] + base, t[1] + base, t[2] + base);
                 group.extend_from_slice(&if flip { [a, c, b] } else { [a, b, c] });
             }
@@ -177,7 +177,7 @@ fn add_primitive(raw: &mut RawMesh, attrs: &mut Attrs, prim: &gltf::Primitive, m
         None => {
             // glTF: flat normals when none are given, so every triangle gets its own corners.
             let mut tris = Vec::with_capacity(indices.len());
-            for t in indices.chunks_exact(3) {
+            for t in indices.as_chunks::<3>().0 {
                 let order = if flip { [t[0], t[2], t[1]] } else { [t[0], t[1], t[2]] };
                 let p = order.map(|i| world.get(i as usize).copied().unwrap_or_default());
                 let face = (p[1] - p[0]).cross(p[2] - p[0]).try_normalize().unwrap_or(Vec3::Y);

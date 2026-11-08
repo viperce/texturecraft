@@ -83,9 +83,7 @@ mod tests {
         for p in &mut m.positions {
             *p = Vec3::new(p.x, -p.z, 0.0);
         }
-        for n in &mut m.normals {
-            *n = Vec3::Z;
-        }
+        m.normals.fill(Vec3::Z);
         let bvh = Bvh::new(&m);
         let cam = OrbitCamera::default();
         let ctx = PickCtx { mesh: &m, bvh: &bvh, camera: &cam, viewport: Vec2::new(100.0, 100.0) };

@@ -227,14 +227,14 @@ impl<'a> Ogawa<'a> {
         Ok(match p.pod {
             0 | 1 => raw.iter().map(|v| *v as f64).collect(),
             2 => raw.iter().map(|v| *v as i8 as f64).collect(),
-            3 => raw.chunks_exact(2).map(|c| u16::from_le_bytes(le(c)) as f64).collect(),
-            4 => raw.chunks_exact(2).map(|c| i16::from_le_bytes(le(c)) as f64).collect(),
-            5 => raw.chunks_exact(4).map(|c| u32::from_le_bytes(le(c)) as f64).collect(),
-            6 => raw.chunks_exact(4).map(|c| i32::from_le_bytes(le(c)) as f64).collect(),
-            7 => raw.chunks_exact(8).map(|c| u64::from_le_bytes(le(c)) as f64).collect(),
-            8 => raw.chunks_exact(8).map(|c| i64::from_le_bytes(le(c)) as f64).collect(),
-            10 => raw.chunks_exact(4).map(|c| f32::from_le_bytes(le(c)) as f64).collect(),
-            _ => raw.chunks_exact(8).map(|c| f64::from_le_bytes(le(c))).collect(),
+            3 => raw.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(le(c)) as f64).collect(),
+            4 => raw.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(le(c)) as f64).collect(),
+            5 => raw.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(le(c)) as f64).collect(),
+            6 => raw.as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes(le(c)) as f64).collect(),
+            7 => raw.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(le(c)) as f64).collect(),
+            8 => raw.as_chunks::<8>().0.iter().map(|c| i64::from_le_bytes(le(c)) as f64).collect(),
+            10 => raw.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(le(c)) as f64).collect(),
+            _ => raw.as_chunks::<8>().0.iter().map(|c| f64::from_le_bytes(le(c))).collect(),
         })
     }
 
@@ -502,7 +502,7 @@ impl Walk<'_, '_> {
         let indices = get(&mut self.o, ".faceIndices")?;
         let counts = get(&mut self.o, ".faceCounts")?;
         check_vertices(p.len() / 3)?;
-        let points: Vec<Vec3> = p.chunks_exact(3).map(|c| world.transform_point3(Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32))).collect();
+        let points: Vec<Vec3> = p.as_chunks::<3>().0.iter().map(|c| world.transform_point3(Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32))).collect();
         let n = [points.len(), counts.len(), indices.len()];
         let normals = self.param(&props, "N", n)?;
         let uvs = self.param(&props, "uv", n)?;
