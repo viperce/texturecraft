@@ -350,3 +350,95 @@ fn bench_8k_resize() {
     println!("[resize] dilation {:.2?}", t.elapsed());
     drop(d);
 }
+
+/// Smooth, realistic data for a baked map of `comps` components: normals vary slowly, AO is a
+/// low-frequency sine product, Id has a few flat regions and Position is a linear ramp.
+fn baked_data(kind: texturecraft_engine::core::BakedMap, res: u32) -> Vec<f32> {
+    use texturecraft_engine::core::BakedMap;
+    let n = res as usize;
+    let mut out = Vec::with_capacity(n * n * kind.components());
+    for y in 0..n {
+        for x in 0..n {
+            let (u, v) = (x as f32 / n as f32, y as f32 / n as f32);
+            match kind {
+                BakedMap::Normal | BakedMap::WorldNormal => {
+                    let (a, b) = ((u * 3.0).sin() * 0.4, (v * 2.0).cos() * 0.4);
+                    let c = (1.0 - a * a - b * b).max(0.0).sqrt();
+                    out.extend([a * 0.5 + 0.5, b * 0.5 + 0.5, c * 0.5 + 0.5]);
+                }
+                BakedMap::Position => out.extend([u, v, (u + v) * 0.5]),
+                BakedMap::Id => {
+                    let region = ((x * 4 / n) + (y * 4 / n)) as f32;
+                    out.extend([region / 8.0, (region * 0.37).fract(), (region * 0.73).fract()]);
+                }
+                _ => out.push(0.5 + 0.5 * (u * 9.0).sin() * (v * 7.0).sin()),
+            }
+        }
+    }
+    out
+}
+
+/// Run `f` while sampling this process's resident set (via `ps`, every 50 ms): returns the result
+/// and the highest sample in MB. Coarse, but it isolates one phase from the rest of the test.
+fn with_peak_rss<T>(f: impl FnOnce() -> T) -> (T, f64) {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    let pid = std::process::id().to_string();
+    /// Stops the sampler on drop, so a panic in `f` cannot leave the scope joining a live thread.
+    struct Stop<'a>(&'a AtomicBool);
+    impl Drop for Stop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+    let (stop, peak) = (AtomicBool::new(false), AtomicU64::new(0));
+    std::thread::scope(|sc| {
+        sc.spawn(|| {
+            while !stop.load(Ordering::Relaxed) {
+                let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid]).output().ok();
+                let kb = out.and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().ok()).unwrap_or(0);
+                peak.fetch_max(kb, Ordering::Relaxed);
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let guard = Stop(&stop);
+        let r = f();
+        drop(guard);
+        (r, peak.load(Ordering::Relaxed) as f64 / 1024.0)
+    })
+}
+
+#[test]
+#[ignore]
+fn bench_save() {
+    use std::io::Cursor;
+    use std::sync::Arc;
+    use texturecraft_engine::compose::BakedMaps;
+    use texturecraft_engine::core::BakedMap;
+    const RES: u32 = 4096;
+    let mut s = stack(RES);
+    let kinds =
+        [BakedMap::Normal, BakedMap::WorldNormal, BakedMap::Position, BakedMap::AmbientOcclusion, BakedMap::Curvature, BakedMap::Thickness, BakedMap::Id];
+    let maps = kinds.iter().map(|&k| (k, Arc::new(baked_data(k, RES)))).collect();
+    s.doc.baked.entry(0).or_default().clone_from(&BakedMaps { resolution: RES, maps });
+
+    let t = Instant::now();
+    let pf = s.project_file();
+    println!("[save] project_file: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+    let (_, before_rss) = with_peak_rss(|| std::thread::sleep(Duration::from_millis(150)));
+    println!("[save] RSS before save {before_rss:.0} MB");
+    let t = Instant::now();
+    let (bytes, save_rss) = with_peak_rss(|| texturecraft_engine::formats::save_project_bytes(&pf).unwrap());
+    println!("[save] save_project_bytes: {:.0} ms, file {:.1} MB, peak RSS during save {save_rss:.0} MB", t.elapsed().as_secs_f64() * 1e3, mb(bytes.len()));
+    let t = Instant::now();
+    let (loaded, load_rss) = with_peak_rss(|| texturecraft_engine::formats::load_project_bytes(&bytes).unwrap());
+    println!("[save] load_project_bytes: {:.0} ms, peak RSS during load {load_rss:.0} MB", t.elapsed().as_secs_f64() * 1e3);
+    assert_eq!(loaded.baked, pf.baked);
+
+    let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let (mut baked, mut other) = (0u64, 0u64);
+    for i in 0..zip.len() {
+        let f = zip.by_index(i).unwrap();
+        if f.name().unwrap().starts_with("baked/") { baked += f.compressed_size() } else { other += f.compressed_size() }
+    }
+    println!("[save] baked entries: {:.1} MB, other entries: {:.1} MB", mb(baked as usize), mb(other as usize));
+}

@@ -407,3 +407,171 @@ fn recovery_does_not_accept_unrelated_json_errors() {
     let error = load_project_bytes(&bytes).unwrap_err();
     assert!(error.to_string().contains("duplicate field"), "{error}");
 }
+
+/// The entry was refused by the declared-size check, before any data was read (the chunked
+/// reader would also refuse a short entry, but only after reading it).
+fn assert_size_mismatch(e: &FormatError) {
+    assert!(matches!(e, FormatError::Malformed { .. }), "{e}");
+    assert!(e.to_string().contains(" bytes for a "), "not the declared-size check: {e}");
+}
+
+#[test]
+fn a_baked_map_header_cannot_claim_more_than_the_entry_holds() {
+    let m = BakedMap::AmbientOcclusion;
+    // Claims 16384 × 16384 (2^28 texels, the largest accepted) but holds 8 bytes of data.
+    let mut entry = header(16_384, 16_384, m.components(), 0);
+    entry.extend([0u8; 8]);
+    let bytes = zip_with(&[(&format!("baked/0_{}.bin", m.id()), entry)]);
+    let e = load_project_bytes(&bytes).unwrap_err();
+    assert!(!is_guard_error(&e), "{e}");
+    assert_size_mismatch(&e);
+}
+
+#[test]
+fn a_legacy_named_baked_map_header_cannot_claim_more_than_the_entry_holds() {
+    // Older map names are recovered onto the same reader, so they get the same size check.
+    let mut entry = header(16_384, 16_384, BakedMap::AmbientOcclusion.components(), 0);
+    entry.extend([0u8; 8]);
+    let bytes = zip_with(&[("baked/0_ambient_occlusion.bin", entry)]);
+    let e = load_project_bytes(&bytes).unwrap_err();
+    assert!(!is_guard_error(&e), "{e}");
+    assert_size_mismatch(&e);
+}
+
+#[test]
+fn a_bake_paint_header_cannot_claim_more_than_the_entry_holds() {
+    // Claims 16384 × 16384 (2^28 texels, the largest accepted) but holds 8 bytes of data.
+    let mut entry = header(16_384, 16_384, 1, 0);
+    entry.extend([0u8; 8]);
+    let bytes = zip_with(&[("bake_paint/0_skew.bin", entry)]);
+    let e = load_project_bytes(&bytes).unwrap_err();
+    assert!(!is_guard_error(&e), "{e}");
+    assert_size_mismatch(&e);
+}
+
+#[test]
+fn a_baked_map_entry_shorter_than_its_header_is_malformed() {
+    // The header claims 4096 × 4096 but the entry holds only 1000 data bytes: the declared entry
+    // size disagrees with the header, so it is rejected before any data is read.
+    let m = BakedMap::AmbientOcclusion;
+    let mut entry = header(4096, 4096, m.components(), 0);
+    entry.extend(vec![0u8; 1000]);
+    let bytes = zip_with(&[(&format!("baked/0_{}.bin", m.id()), entry)]);
+    let e = load_project_bytes(&bytes).unwrap_err();
+    assert!(!is_guard_error(&e), "{e}");
+    assert_size_mismatch(&e);
+}
+
+/// Overwrite the uncompressed size recorded for `name` in both the central-directory record and
+/// the local file header of a zip, leaving the stored data untouched.
+fn forge_uncompressed_size(zip: &mut [u8], name: &str, size: u32) {
+    let find = |sig: &[u8], name_at: usize| {
+        (0..zip.len().saturating_sub(name_at + name.len()))
+            .find(|&i| zip[i..].starts_with(sig) && &zip[i + name_at..i + name_at + name.len()] == name.as_bytes())
+            .expect("entry record present")
+    };
+    let central = find(b"PK\x01\x02", 46);
+    let local = find(b"PK\x03\x04", 30);
+    zip[central + 24..central + 28].copy_from_slice(&size.to_le_bytes());
+    zip[local + 22..local + 26].copy_from_slice(&size.to_le_bytes());
+}
+
+#[test]
+fn a_baked_map_with_matching_declared_size_but_truncated_payload_is_malformed() {
+    // The entry holds a valid header and no texel data, but its recorded size is patched to the full
+    // expected `24 + 4 * comps`: the size check passes, so only the short read can reject it.
+    let m = BakedMap::AmbientOcclusion;
+    let name = format!("baked/0_{}.bin", m.id());
+    let mut bytes = zip_with(&[(&name, header(1, 1, m.components(), 0))]);
+    let full = u32::try_from(24 + 4 * m.components()).unwrap();
+    forge_uncompressed_size(&mut bytes, &name, full);
+    let e = load_project_bytes(&bytes).unwrap_err();
+    assert!(!is_guard_error(&e), "{e}");
+    assert!(matches!(e, FormatError::Malformed { .. }), "{e}");
+}
+
+/// The version 1 layout: the baked header, then interleaved f32 LE.
+fn baked_v1(w: u32, h: u32, comps: usize, values: &[f32]) -> Vec<u8> {
+    let mut b = header(w, h, comps, 0);
+    b.extend(values.iter().flat_map(|v| v.to_le_bytes()));
+    b
+}
+
+#[test]
+fn baked_maps_round_trip_bit_exact() {
+    let mut s = sample();
+    let scalar = [
+        0.0,
+        -0.0,
+        f32::MIN_POSITIVE,
+        f32::from_bits(1),
+        f32::from_bits(0x007f_ffff),
+        1.0e30,
+        0.999_999_9,
+        1.000_000_1,
+        -1.0e-30,
+        f32::MAX,
+        f32::NAN,
+        f32::NEG_INFINITY,
+    ];
+    let ao: Vec<f32> = scalar.iter().cycle().take(4 * 6).copied().collect();
+    let normal: Vec<f32> = (0..4 * 6 * 3).map(|i| [i as f32 * 0.37, 1.0 - i as f32 * 1e-7, -(i as f32).sqrt()][i % 3]).collect();
+    let baked = BakedMaps { resolution: 4, maps: [(BakedMap::AmbientOcclusion, Arc::new(ao)), (BakedMap::Normal, Arc::new(normal))].into() };
+    s.pf.baked = [(0, baked.clone())].into();
+    let paint = BakePaintData { width: 4, height: 3, values: scalar.to_vec() };
+    s.pf.bake_paint = [((0, texturecraft_core::BakePaintTarget::Skew), paint.clone())].into();
+    let back = load_project_bytes(&save_project_bytes(&s.pf).unwrap()).unwrap();
+    let have = &back.bake_paint[&(0, texturecraft_core::BakePaintTarget::Skew)];
+    assert_eq!((have.width, have.height), (paint.width, paint.height));
+    assert!(have.values.iter().zip(&paint.values).all(|(a, b)| a.to_bits() == b.to_bits()), "bake paint differs");
+    let got = &back.baked[&0];
+    assert_eq!((got.resolution, got.maps.len()), (4, 2));
+    for (m, want) in &baked.maps {
+        let have = &got.maps[m];
+        assert_eq!(have.len(), want.len());
+        assert!(have.iter().zip(want.iter()).all(|(a, b)| a.to_bits() == b.to_bits()), "{m:?} differs");
+    }
+}
+
+#[test]
+fn version_1_baked_maps_still_load() {
+    let ao: Vec<f32> = (0..16).map(|i| i as f32 * 0.25 - 1.0).collect();
+    let normal: Vec<f32> = (0..4 * 4 * 3).map(|i| i as f32 / 7.0).collect();
+    let bytes = zip_with(&[
+        (&format!("baked/0_{}.bin", BakedMap::AmbientOcclusion.id()), baked_v1(4, 4, 1, &ao)),
+        (&format!("baked/0_{}.bin", BakedMap::Normal.id()), baked_v1(4, 4, 3, &normal)),
+    ]);
+    let pf = load_project_bytes(&bytes).unwrap();
+    let maps = &pf.baked[&0];
+    assert_eq!(maps.resolution, 4);
+    assert_eq!(*maps.maps[&BakedMap::AmbientOcclusion], ao);
+    assert_eq!(*maps.maps[&BakedMap::Normal], normal);
+}
+
+#[test]
+fn newer_baked_version_is_refused() {
+    let mut b = baked_v1(2, 2, 1, &[0.0; 4]);
+    b.splice(4..8, 3u32.to_le_bytes());
+    let bytes = zip_with(&[(&format!("baked/0_{}.bin", BakedMap::AmbientOcclusion.id()), b)]);
+    assert!(matches!(load_project_bytes(&bytes), Err(FormatError::NewerVersion { found: 3, supported: 2 })));
+}
+
+#[test]
+fn truncated_version_2_baked_map_is_an_error() {
+    let mut s = sample();
+    s.pf.baked = [(0, BakedMaps { resolution: 4, maps: [(BakedMap::Normal, Arc::new(vec![0.5; 4 * 4 * 3]))].into() })].into();
+    let full = save_project_bytes(&s.pf).unwrap();
+    let back = load_project_bytes(&full).unwrap();
+    assert_eq!(back.baked[&0].maps.len(), 1);
+    // A plane entry cut short: header says 4×4×3 but only part of the planes follow.
+    let mut b = baked_header(4, 4, 3);
+    b.extend(vec![0u8; 4 * 4 * 3 * 4 - 5]);
+    let name = format!("baked/0_{}.bin", BakedMap::Normal.id());
+    let mut bytes = zip_with(&[(&name, b)]);
+    // Declare the full size (24-byte header + 4×4×3 f32s) so the declared-size check passes and
+    // the version-2 plane reader is what hits the missing bytes.
+    forge_uncompressed_size(&mut bytes, &name, 24 + 4 * 4 * 3 * 4);
+    let e = load_project_bytes(&bytes).unwrap_err();
+    assert!(!is_guard_error(&e), "{e}");
+    assert!(matches!(e, FormatError::Malformed { .. }), "{e}");
+}
