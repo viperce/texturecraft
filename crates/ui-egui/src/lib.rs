@@ -25,6 +25,7 @@ mod preview_request;
 mod preview_worker;
 pub mod profile;
 pub mod properties_popup;
+mod rail_popup;
 pub mod render_mode;
 pub mod shelf;
 pub mod shelf_preview;
