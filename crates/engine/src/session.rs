@@ -319,6 +319,10 @@ pub struct Session {
     pub bvh: Arc<Bvh>,
     /// Original mesh file (saved inside the project); None for built-in meshes.
     pub mesh_source: Option<(String, Vec<u8>)>,
+    /// Animation frame of `mesh_source` the mesh was read at, and how many frames it has (1: a
+    /// still mesh). See [`Session::set_mesh_frame`].
+    pub mesh_frame: usize,
+    pub mesh_frames: usize,
     /// High-definition meshes and cage for baking (saved inside the project).
     pub bake_meshes: crate::BakeMeshes,
     pub caches: Vec<SetCache>,
@@ -382,6 +386,8 @@ impl Session {
             mesh,
             bvh: Arc::new(bvh),
             mesh_source,
+            mesh_frame: 0,
+            mesh_frames: 1,
             bake_meshes: Default::default(),
             caches,
             undo: Vec::new(),
@@ -417,6 +423,22 @@ impl Session {
         next.export_presets = std::mem::take(&mut self.export_presets);
         next.templates = std::mem::take(&mut self.templates);
         *self = next;
+    }
+
+    /// Swap in `mesh`, an animation frame of the current one (same triangles, UVs and parts): the
+    /// painted layers stay, the surface caches and the ray-tracing tree are rebuilt for the new shape.
+    pub(crate) fn replace_mesh(&mut self, mesh: Mesh) -> Result<()> {
+        mesh.validate().map_err(|e| EngineError::Other(e.to_string()))?;
+        let source = Arc::new(mesh);
+        let mesh = tiled_mesh(&source, &self.doc.project);
+        self.bvh = Arc::new(Bvh::new(&mesh));
+        self.caches = self.doc.project.texture_sets.iter().map(|ts| SetCache::new(&mesh, ts)).collect();
+        self.source = source;
+        self.mesh = mesh;
+        self.mesh_id = next_mesh_id();
+        self.depth_cache = None;
+        self.revision += 1;
+        Ok(())
     }
 
     /// A new project: one texture set per mesh material, each with an empty paint layer. Sets

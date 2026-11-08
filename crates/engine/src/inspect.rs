@@ -165,7 +165,7 @@ pub fn session(s: &Session) -> Value {
     let ts = s.ts();
     json!({
         "project": s.doc.project.name,
-        "mesh": { "source": s.doc.project.mesh, "triangles": s.mesh.triangle_count(), "vertices": s.mesh.vertex_count(), "materials": s.mesh.materials },
+        "mesh": { "source": s.doc.project.mesh, "triangles": s.mesh.triangle_count(), "vertices": s.mesh.vertex_count(), "materials": s.mesh.materials, "frame": s.mesh_frame, "frames": s.mesh_frames },
         "path": s.path,
         "modified": s.modified,
         "textureSets": texture_sets(s),

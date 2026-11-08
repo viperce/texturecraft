@@ -38,6 +38,15 @@ pub fn specs() -> Vec<CommandSpec> {
             reimport
         ),
         cmd!(
+            "file.setMeshFrame",
+            "Set mesh animation frame",
+            [],
+            None,
+            "{frame: 0-based frame (sample index) of an animated mesh file (Alembic); the painted layers stay and the shape follows the frame, which must keep the mesh's triangles and UVs; not an undo step} → {frame, frames}",
+            always,
+            set_mesh_frame
+        ),
+        cmd!(
             "file.exportTextures",
             "Export textures",
             ["File"],
@@ -85,10 +94,11 @@ fn leaf_of(name: &str) -> String {
 }
 
 /// Read the project's stored mesh `bytes` (extension `ext`) under the name it was imported
-/// with, so its unnamed parts keep their names (and the geometry masks that use them).
-fn read_stored_mesh(project: &Project, ext: &str, bytes: &[u8]) -> Result<texturecraft_formats::ImportedMesh> {
+/// with, so its unnamed parts keep their names (and the geometry masks that use them), at
+/// animation frame `frame`.
+fn read_stored_mesh(project: &Project, ext: &str, bytes: &[u8], frame: usize) -> Result<texturecraft_formats::ImportedMesh> {
     let stem = std::path::Path::new(&project.mesh_file).file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty()).unwrap_or("mesh");
-    texturecraft_formats::import_mesh_bytes(&format!("{stem}.{ext}"), bytes).map_err(fe)
+    texturecraft_formats::import_mesh_bytes_at(&format!("{stem}.{ext}"), bytes, frame).map_err(fe)
 }
 
 impl Session {
@@ -151,6 +161,7 @@ impl Session {
         let mut s = Session::new_project_tiled(name, imported.mesh, &format!("mesh.{ext}"), Some((ext, bytes.to_vec())), resolution, uv_tiles)?;
         s.doc.project.mesh_file = leaf_of(file_name);
         s.doc.project.cameras = imported.cameras;
+        s.mesh_frames = imported.frames;
         s.log.extend(imported.report.warnings.iter().cloned());
         s.log.push(format!(
             "Imported {} ({} triangles, {} materials{})",
@@ -169,9 +180,15 @@ impl Session {
     }
 
     pub fn from_project_file(pf: ProjectFile) -> Result<Session> {
+        let (mut frame, mut frames) = (0, 1);
         let mesh = match (&pf.mesh, pf.project.mesh.strip_prefix("builtin:")) {
             (_, Some(id)) => primitives::builtin(id).ok_or_else(|| EngineError::Other(format!("unknown built-in mesh `{id}`")))?,
-            (Some((ext, bytes)), None) => read_stored_mesh(&pf.project, ext, bytes)?.mesh,
+            (Some((ext, bytes)), None) => {
+                frame = pf.project.mesh_frame as usize;
+                let imported = read_stored_mesh(&pf.project, ext, bytes, frame)?;
+                frames = imported.frames;
+                imported.mesh
+            }
             (None, None) => return Err(EngineError::Other("the project has no mesh".into())),
         };
 
@@ -181,6 +198,7 @@ impl Session {
         let mut s =
             Session::new(Document { bake_paint: Default::default(), project: pf.project, pixels: pf.pixels, baked: pf.baked, resources }, mesh, source)?;
 
+        (s.mesh_frame, s.mesh_frames) = (frame, frames);
         s.sync_images();
         s.load_bake_meshes(pf.high_poly, pf.cage);
         s.load_bake_paint(pf.bake_paint);
@@ -207,8 +225,10 @@ impl Session {
         pixels.masks.retain(|id, img| size_of(*id) == Some((img.width(), img.height())));
 
         let (high_poly, cage) = self.saved_bake_meshes();
+        let mut project = self.doc.project.clone();
+        project.mesh_frame = u32::try_from(self.mesh_frame).unwrap_or(0);
         ProjectFile {
-            project: self.doc.project.clone(),
+            project,
             pixels,
             baked: self.doc.baked.clone(),
             mesh: self.mesh_source.clone(),
@@ -427,18 +447,23 @@ impl Session {
     /// With `preserve_strokes`, painted pixels follow the surface where the UVs changed. Replies
     /// like `file.reimportMesh`: `{preserved?}`.
     pub fn reimport_mesh(&mut self, file: Option<texturecraft_formats::MeshFile>, preserve_strokes: bool) -> Result<Value> {
-        let (mesh, source, warnings, mesh_file) = match file {
+        let (imported, source, warnings, mesh_file, frame) = match file {
             Some(f) => {
-                let m = texturecraft_formats::import_mesh_bytes(&f.name, &f.bytes).map_err(fe)?.mesh;
-                (m, Some((ext_of(&f.name), f.bytes)), f.warnings, leaf_of(&f.name))
+                let m = texturecraft_formats::import_mesh_bytes(&f.name, &f.bytes).map_err(fe)?;
+                (m, Some((ext_of(&f.name), f.bytes)), f.warnings, leaf_of(&f.name), 0)
             }
             None => match &self.mesh_source {
-                Some((ext, bytes)) => {
-                    (read_stored_mesh(&self.doc.project, ext, bytes)?.mesh, self.mesh_source.clone(), Vec::new(), self.doc.project.mesh_file.clone())
-                }
+                Some((ext, bytes)) => (
+                    read_stored_mesh(&self.doc.project, ext, bytes, self.mesh_frame)?,
+                    self.mesh_source.clone(),
+                    Vec::new(),
+                    self.doc.project.mesh_file.clone(),
+                    self.mesh_frame,
+                ),
                 None => return Err(bad("file.reimportMesh", "built-in meshes can't be reimported; give `path`")),
             },
         };
+        let (mesh, frames) = (imported.mesh, imported.frames);
         check_materials(&self.doc.project, &mesh)?;
         let mut doc = self.doc.clone();
         if let Some((ext, _)) = &source {
@@ -446,12 +471,55 @@ impl Session {
             doc.project.mesh_file = mesh_file;
         }
         let mut next = Session::new(doc, mesh, source)?;
+        (next.mesh_frame, next.mesh_frames) = (frame, frames);
         next.log.extend(warnings);
         next.path = self.path.clone();
         next.modified = true;
         let preserved = preserve_strokes.then(|| crate::preserve::preserve_strokes(self, &mut next));
         self.switch_to(next);
         Ok(preserved.map_or(Value::Null, |n| json!({ "preserved": n })))
+    }
+}
+
+fn set_mesh_frame(s: &mut Session, p: &Value) -> Result<Value> {
+    let frame = u64p(p, "frame").ok_or_else(|| bad("file.setMeshFrame", "give `frame`, a whole number from 0"))?;
+    s.set_mesh_frame(usize::try_from(frame).unwrap_or(usize::MAX))?;
+    Ok(json!({ "frame": s.mesh_frame, "frames": s.mesh_frames }))
+}
+
+impl Session {
+    /// Move the mesh to frame `frame` of its animated source file (see [`Session::mesh_frames`]),
+    /// keeping the painted layers: the new shape must have the same triangles, UVs and parts as the
+    /// current one, since paint lives in UV space. Not an undo step; the frame is saved with the
+    /// project.
+    pub fn set_mesh_frame(&mut self, frame: usize) -> Result<()> {
+        let Some((ext, bytes)) = &self.mesh_source else {
+            return Err(bad("file.setMeshFrame", "built-in meshes have no animation frames"));
+        };
+        if frame >= self.mesh_frames {
+            return Err(bad("file.setMeshFrame", format!("frame {frame} is out of range: the mesh has {} frame(s), numbered from 0", self.mesh_frames)));
+        }
+        if self.stroke.is_some() {
+            return Err(bad("file.setMeshFrame", "finish the stroke in progress first"));
+        }
+        if frame == self.mesh_frame {
+            return Ok(());
+        }
+        let mesh = read_stored_mesh(&self.doc.project, ext, bytes, frame)?.mesh;
+        let now = &*self.source;
+        if mesh.indices != now.indices || mesh.uvs != now.uvs || mesh.submeshes != now.submeshes || mesh.materials != now.materials {
+            return Err(bad(
+                "file.setMeshFrame",
+                format!(
+                    "frame {frame} has other triangles or UVs than frame {}; paint follows a fixed UV layout, so the mesh must keep its topology",
+                    self.mesh_frame
+                ),
+            ));
+        }
+        self.replace_mesh(mesh)?;
+        self.mesh_frame = frame;
+        self.modified = true;
+        Ok(())
     }
 }
 

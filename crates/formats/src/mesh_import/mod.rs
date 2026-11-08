@@ -52,6 +52,8 @@ pub struct ImportedMesh {
     pub report: MeshReport,
     /// Cameras of the file (glTF, FBX, COLLADA, USD), as orbit cameras around the mesh.
     pub cameras: Vec<texturecraft_core::Camera>,
+    /// Frames of an animated file (Alembic samples); 1 for a still mesh.
+    pub frames: usize,
 }
 
 /// Most entries of a zip package (usdz, an FBX with its textures).
@@ -136,6 +138,8 @@ pub(crate) struct RawMesh {
     pub base_colors: Vec<RawBaseColor>,
     /// Vertex pairs (smaller first) that [`RawMesh::polygon`] added to split polygons.
     pub diagonals: HashSet<(u32, u32)>,
+    /// Frames of an animated file (0: not animated).
+    pub frames: usize,
 }
 
 /// A material's base color as a file gives it: the linear factor and the encoded texture.
@@ -271,7 +275,18 @@ fn extension(file_name: &str) -> String {
 /// self-contained (see [`self_contained_mesh`]); OBJ material libraries are not read (usemtl
 /// names are).
 pub fn import_mesh_bytes(file_name: &str, bytes: &[u8]) -> Result<ImportedMesh> {
-    finish(read(file_name, bytes)?)
+    finish(read(file_name, bytes, 0)?)
+}
+
+/// [`import_mesh_bytes`] at animation frame `frame` (0-based; [`ImportedMesh::frames`] of them).
+/// A frame the file doesn't have is an error, as is any frame but 0 of a still mesh.
+pub fn import_mesh_bytes_at(file_name: &str, bytes: &[u8], frame: usize) -> Result<ImportedMesh> {
+    let raw = read(file_name, bytes, frame)?;
+    let frames = raw.frames.max(1);
+    if frame >= frames {
+        return Err(FormatError::Invalid(format!("frame {frame} is out of range: the file has {frames} frame(s), numbered from 0")));
+    }
+    finish(raw)
 }
 
 /// Import a mesh file with the files it references next to it ([`read_mesh_file`]).
@@ -303,7 +318,7 @@ pub struct HighPolyMesh {
 /// FBX media, usdz packages, and files [`self_contained_mesh`] folded in) come along for the
 /// color map, textures downscaled to [`BASE_COLOR_SIDE`].
 pub fn import_high_poly_bytes(file_name: &str, bytes: &[u8]) -> Result<HighPolyMesh> {
-    let mut raw = read(file_name, bytes)?;
+    let mut raw = read(file_name, bytes, 0)?;
     let colors = std::mem::take(&mut raw.base_colors);
     let (mut mesh, mut warnings, uvs) = geometry(raw)?;
     let n = mesh.positions.len();
@@ -352,13 +367,14 @@ fn decode_base_color(bytes: &[u8], budget: &mut u64) -> Result<(u32, u32, Vec<[u
     Ok((w, h, rgba.pixels().map(|p| p.0).collect()))
 }
 
-fn read(file_name: &str, bytes: &[u8]) -> Result<RawMesh> {
+/// `frame` only matters to animated formats (Alembic).
+fn read(file_name: &str, bytes: &[u8], frame: usize) -> Result<RawMesh> {
     let mut raw = match extension(file_name).as_str() {
         "gltf" | "glb" => gltf::read(bytes)?,
         "fbx" => fbx::read(bytes)?,
         "dae" => dae::read(bytes)?,
         "usd" | "usda" | "usdc" | "usdz" => usd::read(file_name, bytes)?,
-        "abc" => abc::read(bytes)?,
+        "abc" => abc::read(bytes, frame)?,
         "obj" => obj::read(bytes)?,
         "ply" => ply::read(bytes)?,
         "stl" => stl::read(bytes)?,
@@ -428,6 +444,7 @@ fn geometry(raw: RawMesh) -> Result<(Mesh, Vec<String>, Option<Vec<Vec2>>)> {
 pub(crate) fn finish(mut raw: RawMesh) -> Result<ImportedMesh> {
     let mut raw_cameras = std::mem::take(&mut raw.cameras);
     raw_cameras.truncate(MAX_CAMERAS);
+    let frames = raw.frames.max(1);
     let (mut mesh, mut warnings, uvs) = geometry(raw)?;
     let uvs_generated = match uvs {
         Some(uv) if uv.len() == mesh.positions.len() => {
@@ -447,7 +464,7 @@ pub(crate) fn finish(mut raw: RawMesh) -> Result<ImportedMesh> {
     mesh.validate()?;
     let report = report(&mesh, uvs_generated, warnings);
     let cameras = orbit_cameras(&raw_cameras, &mesh);
-    Ok(ImportedMesh { mesh, report, cameras })
+    Ok(ImportedMesh { mesh, report, cameras, frames })
 }
 
 /// File cameras as orbit cameras: the target is where the view axis passes the mesh center

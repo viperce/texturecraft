@@ -1,4 +1,5 @@
-//! Alembic (`.abc`) in the Ogawa container: every PolyMesh object at its first sample, in world
+//! Alembic (`.abc`) in the Ogawa container: every PolyMesh object at one frame (the sample index
+//! asked for; a property with fewer samples holds its last one), in world
 //! space through the Xform hierarchy (matrix, translate, rotate, scale ops; `.inherits`), with
 //! positions (`P`), polygons (`.faceIndices` / `.faceCounts`, Alembic's clockwise winding turned
 //! counter-clockwise), normals (`N`) and UVs (`uv`), indexed or not, at any geometry scope, and
@@ -8,6 +9,10 @@
 //! an archive group, objects (property compound, children, header block) and properties
 //! (bit-packed header blocks, one group per property holding its samples). Sample hashes are
 //! skipped. HDF5-based Alembic files are refused with a clear error.
+//!
+//! Animation: a frame is a sample index, so time sampling (start time, frame rate) is not
+//! evaluated and nothing is interpolated. The number of frames of a file is the largest sample
+//! count of any property read.
 
 #[cfg(test)]
 mod tests;
@@ -43,6 +48,10 @@ struct Ogawa<'a> {
     budget: usize,
     /// Archive-wide metadata strings properties and objects refer to by index (0 is empty).
     indexed_meta: Vec<String>,
+    /// The sample index every property is read at.
+    frame: usize,
+    /// The most samples any property read so far declares.
+    frames: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -60,6 +69,21 @@ struct Prop {
     pod: u32,
     extent: usize,
     group: u64,
+    /// Samples written (scalar and array properties).
+    samples: usize,
+    /// First and last sample index that differ from their predecessor (0, 0: all samples equal).
+    first_changed: usize,
+    last_changed: usize,
+}
+
+/// The slot of sample `frame` among the `stored` samples of a property. A property stores a
+/// sample per index up to its last change (later samples repeat the last one); a writer that
+/// also drops the samples before the first change (they repeat sample 0) is recognised by the
+/// stored count and read the same way.
+fn sample_slot(p: &Prop, stored: usize, frame: usize) -> usize {
+    let compact = p.first_changed > 1 && stored == p.last_changed.saturating_sub(p.first_changed).saturating_add(2);
+    let slot = if compact { frame.checked_sub(p.first_changed).map_or(0, |d| d.saturating_add(1)) } else { frame };
+    slot.min(stored.saturating_sub(1))
 }
 
 /// Value of `key` in Alembic metadata (`key=value;key=value`).
@@ -178,11 +202,12 @@ impl<'a> Ogawa<'a> {
                 _ => PropKind::Array,
             };
             let (pod, extent) = ((info & 0xf0) >> 4, ((info & 0xff000) >> 12) as usize);
+            let (mut samples, mut first_changed, mut last_changed) = (1, 0, 0);
             if kind != PropKind::Compound {
-                let _samples = c.hinted(hint)?;
+                samples = c.hinted(hint)?;
                 if info & 0x200 != 0 {
-                    c.hinted(hint)?;
-                    c.hinted(hint)?;
+                    first_changed = c.hinted(hint)?;
+                    last_changed = c.hinted(hint)?;
                 }
                 if info & 0x100 != 0 {
                     c.hinted(hint)?;
@@ -198,15 +223,19 @@ impl<'a> Ogawa<'a> {
                 self.meta_at(meta_index)
             };
             let group = children.get(out.len()).copied().ok_or_else(|| malformed(KIND, format!("property \"{name}\" has no group")))?;
-            out.push(Prop { name, meta, kind, pod, extent, group });
+            out.push(Prop { name, meta, kind, pod, extent, group, samples, first_changed, last_changed });
         }
         Ok(out)
     }
 
-    /// The first sample of a scalar or array property as numbers (`extent` per item).
+    /// The sample of a scalar or array property at the frame asked for, as numbers (`extent` per
+    /// item). Array samples take two children (data, dimensions), scalar samples one.
     fn values(&mut self, p: &Prop) -> Result<Vec<f64>> {
         let samples = self.group(p.group)?;
-        let Some(&first) = samples.first() else { return Ok(Vec::new()) };
+        self.frames = self.frames.max(p.samples);
+        let stride = if p.kind == PropKind::Array { 2 } else { 1 };
+        let slot = sample_slot(p, samples.len() / stride, self.frame);
+        let Some(&first) = samples.get(slot * stride) else { return Ok(Vec::new()) };
         let raw = self.data(first)?;
         let raw = if raw.is_empty() {
             raw
@@ -262,18 +291,19 @@ impl<'a> Ogawa<'a> {
     }
 }
 
-pub(crate) fn read(bytes: &[u8]) -> Result<RawMesh> {
-    crate::guard(KIND, || read_inner(bytes))
+/// The mesh at sample index `frame`; [`RawMesh::frames`] is the file's frame count.
+pub(crate) fn read(bytes: &[u8], frame: usize) -> Result<RawMesh> {
+    crate::guard(KIND, || read_inner(bytes, frame))
 }
 
-fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
+fn read_inner(bytes: &[u8], frame: usize) -> Result<RawMesh> {
     if bytes.starts_with(HDF5_MAGIC) {
         return Err(FormatError::Unsupported("HDF5-based Alembic (re-export the file as Alembic Ogawa, the default since Alembic 1.5)".into()));
     }
     if !bytes.starts_with(OGAWA_MAGIC) || bytes.len() < 16 {
         return Err(malformed(KIND, "not an Alembic Ogawa file"));
     }
-    let mut o = Ogawa { b: bytes, budget: MAX_DECODED_BYTES, indexed_meta: vec![String::new()] };
+    let mut o = Ogawa { b: bytes, budget: MAX_DECODED_BYTES, indexed_meta: vec![String::new()], frame, frames: 1 };
     let root_ref = o.u64_at(8)?;
     let root = o.group(root_ref)?;
     let is_data = |i: usize| root.get(i).is_some_and(|r| r & DATA_BIT != 0);
@@ -290,7 +320,10 @@ fn read_inner(bytes: &[u8]) -> Result<RawMesh> {
     let mut sink = PolygonSink::default();
     let mut walk = Walk { o, sink: &mut sink, visits: 0 };
     walk.object(root[2], Mat4::IDENTITY, "", 0)?;
-    Ok(sink.finish())
+    let frames = walk.o.frames;
+    let mut raw = sink.finish();
+    raw.frames = frames;
+    Ok(raw)
 }
 
 struct Walk<'a, 'b> {
