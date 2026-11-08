@@ -197,12 +197,26 @@ pub(crate) fn color_of(v: &Value) -> Option<[f32; 3]> {
         Value::Number(n) => n.as_f64().map(|v| [v as f32; 3]).filter(|v| v[0].is_finite()),
         Value::String(s) => {
             let s = s.trim_start_matches('#');
-            if s.len() != 6 {
+            if s.len() != 6 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return None;
             }
             let c = |i: usize| u8::from_str_radix(s.get(i..i + 2)?, 16).ok().map(|v| texturecraft_texel::srgb_to_linear(v as f32 / 255.0));
             Some([c(0)?, c(2)?, c(4)?])
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::color_of;
+    use serde_json::json;
+
+    #[test]
+    fn hex_color_rejects_signs_and_non_hex() {
+        assert_eq!(color_of(&json!("#+f+f+f")), None);
+        assert_eq!(color_of(&json!("#-00000")), None);
+        assert_eq!(color_of(&json!("#GGGGGG")), None);
+        assert!(color_of(&json!("#ff8000")).is_some());
     }
 }

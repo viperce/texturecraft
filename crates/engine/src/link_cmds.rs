@@ -95,6 +95,9 @@ pub fn typed(param: &LinkParam, v: &Value) -> Option<Value> {
         ("bool", x) => json!(num(x)? != 0.0),
         ("color", Value::String(hex)) => {
             let h = hex.trim_start_matches('#');
+            if h.len() != 6 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
             let c = |i: usize| Some(f64::from(u8::from_str_radix(h.get(i..i + 2)?, 16).ok()?) / 255.0);
             // Hex colors are sRGB; values are linear.
             let lin = |x: f64| if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) };
@@ -446,4 +449,24 @@ fn put_maps(s: &mut Session, stem: &str, maps: &[(Channel, Vec<u8>, texturecraft
         names.push(name);
     }
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::typed;
+    use serde_json::json;
+    use texturecraft_core::layer::LinkParam;
+
+    fn color_param() -> LinkParam {
+        let c = json!({"t": "color", "v": [0.0, 0.0, 0.0, 1.0]});
+        serde_json::from_value(json!({"id": "c", "label": "C", "value": c, "default": c})).unwrap()
+    }
+
+    #[test]
+    fn hex_color_rejects_signs_and_extra_digits() {
+        let p = color_param();
+        assert_eq!(typed(&p, &json!("#aabbccdd")), None);
+        assert_eq!(typed(&p, &json!("#+f+f+f")), None);
+        assert!(typed(&p, &json!("#ff8000")).is_some());
+    }
 }
