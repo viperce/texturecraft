@@ -204,14 +204,18 @@ pub struct LinkJob {
 #[cfg(not(target_arch = "wasm32"))]
 static NEXT_JOB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// A MaterialCraft executable: `$<env>`, else next to this program, else `name` on `PATH`.
+/// A MaterialCraft executable: `$<env>`, else next to this program, else in the sibling
+/// `MaterialCraft` folder (the launcher's layout), else `name` on `PATH`.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn materialcraft_tool(name: &str, env: &str) -> std::path::PathBuf {
     if let Some(p) = std::env::var_os(env).filter(|p| !p.is_empty()) {
         return p.into();
     }
     let exe = format!("{name}{}", std::env::consts::EXE_SUFFIX);
-    std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(&exe))).filter(|p| p.is_file()).unwrap_or_else(|| exe.into())
+    let dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
+    let beside = dir.as_ref().map(|d| d.join(&exe));
+    let sibling = dir.as_ref().and_then(|d| Some(d.parent()?.join("MaterialCraft").join(&exe)));
+    beside.into_iter().chain(sibling).find(|p| p.is_file()).unwrap_or_else(|| exe.into())
 }
 
 /// A command for a MaterialCraft executable that opens no console window.
